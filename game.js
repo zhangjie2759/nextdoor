@@ -2,10 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 本版新增：无限门转场整体缩放变慢；封印五号鬼触发 10 秒鬼眼；角色在开门前就已存在门后
+// 版本：v0.8.2
+// 本版修正：封面显示版本号；无限门转场进一步放慢；整体镜头推进让小门/外门同步缩放；角色更靠右、更容易一开门就露出一部分；封印五号鬼触发 10 秒鬼眼
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
+
+const GAME_VERSION = 'v0.8.2'
+const GAME_VERSION_NOTE = '鬼眼 + 无限门慢速转场修正版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -131,7 +135,7 @@ let enterAnim = 0
 let enteringRoom = false
 let roomFadeIn = 0 // 新房间出现时的黑场淡入，避免切房间突兀
 
-const ENTER_ANIM_SPEED = 0.0085
+const ENTER_ANIM_SPEED = 0.0048
 const ROOM_FADE_IN_SPEED = 0.035
 
 const GHOST_EYE_DURATION_MS = 10000
@@ -463,6 +467,12 @@ canvas.addEventListener('pointercancel', (e) => {
 function update() {
   if (gameState !== 'playing') return
 
+  ctx.fillStyle = 'rgba(255,255,255,0.28)'
+  ctx.font = '11px sans-serif'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText(GAME_VERSION, W - 10, H - 12)
+
   if (roomFadeIn > 0 && !enteringRoom) {
     roomFadeIn = Math.max(0, roomFadeIn - ROOM_FADE_IN_SPEED)
   }
@@ -721,7 +731,7 @@ function drawRoomContent(openRect) {
 
     // 安全人类进入下一间时，不再硬切消失，而是先慢慢淡出。
     // 这样能形成“人从空间里退场，里面的门接管画面”的感觉。
-    const fadeOut = enteringRoom ? smoothstep(enterAnim / 0.45) : 0
+    const fadeOut = enteringRoom ? smoothstep(enterAnim / 0.62) : 0
     const alpha = 1 - fadeOut
     if (alpha <= 0.02) return
 
@@ -735,10 +745,11 @@ function drawRoomContent(openRect) {
 function drawGhostImage(img, openRect) {
   const pressureScale = 1 + danger * 0.18
   const alpha = Math.min(1, 0.38 + danger * 0.62)
-  const centerX = openRect.x + openRect.w * 0.52
+  // 门是向左滑开，最先露出的是门洞右侧；角色略微靠右并放大，保证一开门就能看到一部分。
+  const centerX = openRect.x + openRect.w * 0.66
   const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * 0.56 * pressureScale
-  const maxH = openRect.h * ART_LAYOUT.ghostHeight * pressureScale
+  const maxW = openRect.w * 0.82 * pressureScale
+  const maxH = openRect.h * (ART_LAYOUT.ghostHeight * 1.12) * pressureScale
 
   ctx.save()
   ctx.globalAlpha = alpha
@@ -754,10 +765,11 @@ function drawGhostImage(img, openRect) {
 }
 
 function drawPersonImage(img, openRect) {
-  const centerX = openRect.x + openRect.w * 0.52
+  // 人物也略微靠右，避免门打开一小段时仍完全看不到。
+  const centerX = openRect.x + openRect.w * 0.66
   const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * 0.48
-  const maxH = openRect.h * ART_LAYOUT.personHeight
+  const maxW = openRect.w * 0.72
+  const maxH = openRect.h * (ART_LAYOUT.personHeight * 1.08)
   drawImageContainBottom(img, centerX, bottomY, maxW, maxH)
 }
 
@@ -949,7 +961,7 @@ function drawEnterTransition(baseFrameRect) {
   // 不是只让里面的小门自己放大，而是把整个房间画面当成镜头推进。
   // 计算一个变换，让“房间里的小门框”在最后一帧刚好移动并放大到“外层大门框”的位置。
   // 因为整个画面一起变换，所以小门、大门、门框的放大速度是同步的，玩家会感觉自己真的靠近了下一扇门。
-  const morph = easeInOutCubic(clamp01((t - 0.04) / 0.94))
+  const morph = easeInOutCubic(clamp01((t - 0.02) / 0.96))
   const targetScale = baseFrameRect.h / inner.h
   const scale = lerp(1, targetScale, morph)
   const targetTx = baseFrameRect.x - inner.x * targetScale
@@ -958,7 +970,7 @@ function drawEnterTransition(baseFrameRect) {
   const ty = lerp(0, targetTy, morph)
 
   // 旧空间轻微压暗，转场更稳，不会突然闪一下。
-  const roomDim = smoothstep(t / 0.42)
+  const roomDim = smoothstep(t / 0.65)
   if (roomDim > 0) {
     ctx.fillStyle = `rgba(0,0,0,${0.10 * roomDim})`
     ctx.fillRect(0, 0, W, H)
@@ -1043,6 +1055,10 @@ function drawStartMenu() {
   ctx.font = '15px sans-serif'
   ctx.fillText('选择难度后开始', W / 2, H * 0.2 + 35)
 
+  ctx.fillStyle = 'rgba(245,223,155,0.78)'
+  ctx.font = '13px sans-serif'
+  ctx.fillText(`版本 ${GAME_VERSION}｜${GAME_VERSION_NOTE}`, W / 2, H * 0.2 + 58)
+
   drawDifficultyButton(
     menuButtons.easy,
     '简单版',
@@ -1102,8 +1118,14 @@ function draw() {
     ctx.font = '14px sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'alphabetic'
-    ctx.fillText(`鬼眼：${ghostEyeLeftSeconds().toFixed(1)}s｜门透明度 60%`, W / 2, 100)
+    ctx.fillText(`鬼眼开启：${ghostEyeLeftSeconds().toFixed(1)}s｜门透明度 60%`, W / 2, 100)
   }
+
+  ctx.fillStyle = 'rgba(255,255,255,0.28)'
+  ctx.font = '11px sans-serif'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText(GAME_VERSION, W - 10, H - 12)
 
   if (roomFadeIn > 0 && !enteringRoom) {
     ctx.fillStyle = `rgba(0,0,0,${roomFadeIn})`
