@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.8.2
-// 本版修正：封面显示版本号；无限门转场进一步放慢；整体镜头推进让小门/外门同步缩放；角色更靠右、更容易一开门就露出一部分；封印五号鬼触发 10 秒鬼眼
+// 版本：v0.8.3
+// 本版修正：进入下一间转场加速；保留小门/外门同步缩放；封印五号鬼触发 10 秒鬼眼
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.8.2'
-const GAME_VERSION_NOTE = '鬼眼 + 无限门慢速转场修正版'
+const GAME_VERSION = 'v0.8.3'
+const GAME_VERSION_NOTE = '鬼眼 + 无限门转场加速版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -135,8 +135,8 @@ let enterAnim = 0
 let enteringRoom = false
 let roomFadeIn = 0 // 新房间出现时的黑场淡入，避免切房间突兀
 
-const ENTER_ANIM_SPEED = 0.0048
-const ROOM_FADE_IN_SPEED = 0.035
+const ENTER_ANIM_SPEED = 0.011
+const ROOM_FADE_IN_SPEED = 0.06
 
 const GHOST_EYE_DURATION_MS = 10000
 let ghostEyeUntil = 0
@@ -957,7 +957,7 @@ function drawEnterTransition(baseFrameRect) {
   const open = getOpeningRect(baseFrameRect)
   const inner = getInnerDoorRects(open).frame
 
-  // 更慢、更自然的“无限空间”转场：
+  // 更快但仍然同步的“无限空间”转场：
   // 不是只让里面的小门自己放大，而是把整个房间画面当成镜头推进。
   // 计算一个变换，让“房间里的小门框”在最后一帧刚好移动并放大到“外层大门框”的位置。
   // 因为整个画面一起变换，所以小门、大门、门框的放大速度是同步的，玩家会感觉自己真的靠近了下一扇门。
