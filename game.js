@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.8.3
-// 本版修正：进入下一间转场加速；保留小门/外门同步缩放；封印五号鬼触发 10 秒鬼眼
+// 版本：v0.8.4
+// 本版修正：空房也可封印；增加多鬼房；多鬼需要多张符；降低门过渡变亮感
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.8.3'
-const GAME_VERSION_NOTE = '鬼眼 + 无限门转场加速版'
+const GAME_VERSION = 'v0.8.4'
+const GAME_VERSION_NOTE = '多鬼封印 + 空门封印版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -92,7 +92,7 @@ const ART_LAYOUT = {
   innerFrameY: 0.30,        // 缩小门框位置，越小越靠上/越深
   innerDoorInset: 0.12,     // 缩小门在缩小门框内收进去多少
   roomWallDarkness: 0.22,   // 房间里面墙壁压暗程度，0=不压暗，越大越暗
-  innerDoorAlpha: 0.68,     // 房间里面的小门/小门框透明度，越低越暗
+  innerDoorAlpha: 0.56,     // 房间里面的小门/小门框透明度，越低越暗，避免转场时突然变亮
   ghostHeight: 0.55,        // 角色图片高度，占门洞高度；后续可微调
   personHeight: 0.50,       // 人物图片高度，占门洞高度
   characterBottom: 0.84     // 角色脚底/底部位置，占门洞高度
@@ -117,7 +117,8 @@ const DOOR_AUTO_SPEED = 0.018
 
 let roomContent = 'empty' // ghost / fake / empty
 let ghostType = 'normal' // big / thin / normal
-let ghostSlot = null     // 当前抽到几号鬼
+let ghostSlot = null     // 兼容旧逻辑：当前第一只鬼
+let ghostSlots = []      // 当前房间所有鬼；可能 1~3 只
 let personSlot = null    // 当前抽到几号人物
 
 let contentVisible = false
@@ -128,8 +129,11 @@ let dangerSpeed = 0.02
 let ghostThreshold = 0.35
 
 let isChangingRoom = false
-let sealAnim = 0
+let sealAnim = 1
 let sealSuccess = false
+let sealCountRequired = 0
+let sealCountDone = 0
+let sealEyeTriggered = false
 
 let enterAnim = 0
 let enteringRoom = false
@@ -298,6 +302,32 @@ function randomSlot(slots) {
   return slots[Math.floor(Math.random() * slots.length)]
 }
 
+function shuffleArray(arr) {
+  const copy = arr.slice()
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const tmp = copy[i]
+    copy[i] = copy[j]
+    copy[j] = tmp
+  }
+  return copy
+}
+
+function pickGhostCount() {
+  const maxCount = Math.min(3, ACTIVE_GHOST_SLOTS.length)
+  if (maxCount <= 1) return maxCount
+
+  const r = Math.random()
+  if (maxCount >= 3 && r < 0.08) return 3
+  if (maxCount >= 2 && r < 0.28) return 2
+  return 1
+}
+
+function randomGhostSlots() {
+  const count = pickGhostCount()
+  return shuffleArray(ACTIVE_GHOST_SLOTS).slice(0, count)
+}
+
 function newRoom() {
   dragging = false
   startX = 0
@@ -308,15 +338,19 @@ function newRoom() {
   doorAutoMoving = false
   roomContent = randomContent()
   ghostType = roomContent === 'ghost' ? randomGhostType() : 'normal'
-  ghostSlot = roomContent === 'ghost' ? randomSlot(ACTIVE_GHOST_SLOTS) : null
+  ghostSlots = roomContent === 'ghost' ? randomGhostSlots() : []
+  ghostSlot = ghostSlots[0] || null
   personSlot = roomContent === 'fake' ? randomSlot(ACTIVE_PERSON_SLOTS) : null
+  sealCountRequired = roomContent === 'ghost' ? Math.max(1, ghostSlots.length) : 0
+  sealCountDone = 0
+  sealEyeTriggered = false
 
   contentVisible = false
   hasSeenContent = false
   danger = 0
 
   isChangingRoom = false
-  sealAnim = 0
+  sealAnim = 1
   sealSuccess = false
   enterAnim = 0
   enteringRoom = false
@@ -401,11 +435,23 @@ function pointerDown(x, y) {
   doorAutoMoving = false
 
   if (doorOpen <= 0.05 && hasSeenContent && inSealButton(x, y)) {
+    // 空房、人类房也会出现封印按钮；如果封错，仍然失败。
     if (roomContent === 'ghost') {
+      // 多鬼房需要连续贴多张符。动画没贴完时不重复计数。
+      if (sealSuccess && sealAnim < 1) return
+
+      sealCountDone++
       sealSuccess = true
       sealAnim = 0
-      if (ghostSlot && ghostSlot.id === 5) activateGhostEye()
-      nextRoomAfterSeal()
+
+      if (!sealEyeTriggered && ghostSlots.some((slot) => slot.id === 5)) {
+        sealEyeTriggered = true
+        activateGhostEye()
+      }
+
+      if (sealCountDone >= sealCountRequired) {
+        nextRoomAfterSeal()
+      }
     } else {
       gameOver()
     }
@@ -517,7 +563,8 @@ function update() {
     hasSeenContent = true
   }
 
-  if (roomContent === 'empty' && doorOpen > 0.5) {
+  // 空门也需要能封印：只要开过一点并确认是空房，关门后就显示封印按钮。
+  if (roomContent === 'empty' && doorOpen > 0.08) {
     hasSeenContent = true
   }
 
@@ -712,8 +759,8 @@ function drawExpandingInnerDoor(frameRect, openRect, t) {
   // 这样它会像一个整体被放大、平移，最后精准贴到外部门的位置。
   const frame = lerpRect(start.frame, frameRect, morph)
 
-  // 起始阶段保持深处门偏暗，越接近外层门越恢复完整亮度。
-  const alpha = lerp(ART_LAYOUT.innerDoorAlpha, 1, morph)
+  // 不再让门在过渡里明显变亮，只做位置和尺寸变化，避免闪一下。
+  const alpha = lerp(ART_LAYOUT.innerDoorAlpha, 0.82, morph)
   drawClosedDoorSet(frame, alpha)
 }
 
@@ -721,8 +768,10 @@ function drawRoomContent(openRect) {
   // 鬼 / 人物在房间生成时就已经存在于门后。
   // 这里不再用 contentVisible 控制绘制，避免角色在开到某个阈值后才突然出现。
   if (roomContent === 'ghost') {
-    const img = ghostSlot ? CHARACTER_ASSETS.ghosts[ghostSlot.id] : null
-    if (img) drawGhostImage(img, openRect)
+    ghostSlots.forEach((slot, index) => {
+      const img = slot ? CHARACTER_ASSETS.ghosts[slot.id] : null
+      if (img) drawGhostImage(img, openRect, index, ghostSlots.length)
+    })
   }
 
   if (roomContent === 'fake') {
@@ -742,14 +791,17 @@ function drawRoomContent(openRect) {
   }
 }
 
-function drawGhostImage(img, openRect) {
+function drawGhostImage(img, openRect, index = 0, total = 1) {
   const pressureScale = 1 + danger * 0.18
-  const alpha = Math.min(1, 0.38 + danger * 0.62)
-  // 门是向左滑开，最先露出的是门洞右侧；角色略微靠右并放大，保证一开门就能看到一部分。
-  const centerX = openRect.x + openRect.w * 0.66
+  const alpha = Math.min(1, 0.42 + danger * 0.58)
+  // 多鬼房：几只鬼同时在门后，但分散站位，避免完全重叠。
+  const offsets = total === 1 ? [0] : total === 2 ? [-0.13, 0.13] : [-0.20, 0, 0.20]
+  const sizeFactor = total === 1 ? 1 : total === 2 ? 0.86 : 0.76
+  // 门是向左滑开，最先露出的是门洞右侧；整体略微靠右，保证一开缝就能看到一部分。
+  const centerX = openRect.x + openRect.w * (0.66 + (offsets[index] || 0))
   const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * 0.82 * pressureScale
-  const maxH = openRect.h * (ART_LAYOUT.ghostHeight * 1.12) * pressureScale
+  const maxW = openRect.w * 0.82 * pressureScale * sizeFactor
+  const maxH = openRect.h * (ART_LAYOUT.ghostHeight * 1.12) * pressureScale * sizeFactor
 
   ctx.save()
   ctx.globalAlpha = alpha
@@ -911,18 +963,54 @@ function drawSealButton() {
   ctx.font = '24px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
-  ctx.fillText('封 印', W / 2, sealButton.y + 37)
+  const sealText = roomContent === 'ghost' && sealCountRequired > 1
+    ? `封 印 ${Math.min(sealCountDone + 1, sealCountRequired)}/${sealCountRequired}`
+    : '封 印'
+  ctx.fillText(sealText, W / 2, sealButton.y + 37)
+}
+
+function drawStaticSeal(open, index, total) {
+  const cols = total <= 1 ? [0.52] : total === 2 ? [0.43, 0.61] : [0.38, 0.52, 0.66]
+  const x = open.x + open.w * (cols[index] || 0.52)
+  const y = open.y + open.h * (0.43 + (index % 2) * 0.08)
+  const w = 42
+  const h = 98
+
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.rotate((index - 1) * 0.06)
+  ctx.fillStyle = '#e5c76c'
+  ctx.fillRect(-w / 2, -h / 2, w, h)
+  ctx.strokeStyle = '#9f2020'
+  ctx.lineWidth = 2
+  ctx.strokeRect(-w / 2 + 4, -h / 2 + 4, w - 8, h - 8)
+  ctx.fillStyle = '#9f2020'
+  ctx.font = '24px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('封', 0, 0)
+  ctx.restore()
 }
 
 function drawSealOnDoor(frameRect) {
-  if (!sealSuccess) return
-
   const open = getOpeningRect(frameRect)
+
+  // 已贴好的符：多鬼房会保留多张符在门上。
+  const movingOne = sealSuccess && sealAnim < 1 ? 1 : 0
+  const staticCount = Math.max(0, sealCountDone - movingOne)
+  for (let i = 0; i < staticCount; i++) {
+    drawStaticSeal(open, i, Math.max(sealCountRequired, staticCount))
+  }
+
+  if (!sealSuccess || sealAnim >= 1) return
+
   const t = sealAnim
   const startX = W / 2
   const startY = sealButton.y + sealButton.h / 2
-  const endX = open.x + open.w * 0.52
-  const endY = open.y + open.h * 0.48
+  const index = Math.max(0, sealCountDone - 1)
+  const cols = sealCountRequired <= 1 ? [0.52] : sealCountRequired === 2 ? [0.43, 0.61] : [0.38, 0.52, 0.66]
+  const endX = open.x + open.w * (cols[index] || 0.52)
+  const endY = open.y + open.h * (0.43 + (index % 2) * 0.08)
   const ease = 1 - Math.pow(1 - t, 3)
 
   const x = startX + (endX - startX) * ease
@@ -1078,7 +1166,7 @@ function drawStartMenu() {
   ctx.fillStyle = 'rgba(255,255,255,0.45)'
   ctx.font = '13px sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText('开门看清楚；见鬼后关门，再点封印', W / 2, H * 0.82)
+  ctx.fillText('开门确认；见鬼后关门封印，多只鬼要贴多张符', W / 2, H * 0.82)
 }
 
 function draw() {
