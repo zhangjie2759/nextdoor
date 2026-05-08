@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.8.7
-// 本版新增：主页面 / 游戏规则 / 图鉴系统 / 游戏内返回按钮 / 图鉴收集数量
+// 版本：v0.8.8
+// 本版更新：规则页换行 / UI置顶 / 转场自然变亮 / 人物鬼怪双图鉴
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.8.7'
-const GAME_VERSION_NOTE = '主页面 / 图鉴系统版'
+const GAME_VERSION = 'v0.8.8'
+const GAME_VERSION_NOTE = '双图鉴 / 转场优化版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -73,7 +73,10 @@ let ACTIVE_GHOST_SLOTS = []
 let ACTIVE_PERSON_SLOTS = []
 
 const CODEX_STORAGE_KEY = 'nextDoorSeenGhostIdsV1'
+const PEOPLE_CODEX_STORAGE_KEY = 'nextDoorSeenPeopleIdsV1'
 let SEEN_GHOST_IDS = new Set()
+let SEEN_PERSON_IDS = new Set()
+let codexTab = 'ghosts' // ghosts / people
 
 // 门框原图里“门洞”的位置比例。
 // 这组参数决定：门、墙壁、地板、鬼，都会被放进这个洞口里。
@@ -160,6 +163,10 @@ const menuButtons = {
 
 const backButton = { x: 14, y: 26, w: 58, h: 34 }
 const screenBackButton = { x: 18, y: 24, w: 72, h: 38 }
+const codexTabs = {
+  ghosts: { x: 0, y: 0, w: 0, h: 38 },
+  people: { x: 0, y: 0, w: 0, h: 38 }
+}
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {
@@ -248,6 +255,18 @@ function resizeCanvas() {
   screenBackButton.y = Math.max(18, H * 0.025)
   screenBackButton.w = 72
   screenBackButton.h = 38
+
+  const tabW = Math.min(W * 0.34, 150)
+  const tabGap = 12
+  const tabsTotal = tabW * 2 + tabGap
+  codexTabs.ghosts.x = (W - tabsTotal) / 2
+  codexTabs.ghosts.y = H * 0.19
+  codexTabs.ghosts.w = tabW
+  codexTabs.ghosts.h = 38
+  codexTabs.people.x = codexTabs.ghosts.x + tabW + tabGap
+  codexTabs.people.y = codexTabs.ghosts.y
+  codexTabs.people.w = tabW
+  codexTabs.people.h = 38
 }
 
 resizeCanvas()
@@ -278,10 +297,22 @@ function loadSeenGhosts() {
   } catch (err) {
     SEEN_GHOST_IDS = new Set()
   }
+
+  try {
+    const rawPeople = localStorage.getItem(PEOPLE_CODEX_STORAGE_KEY)
+    const arrPeople = rawPeople ? JSON.parse(rawPeople) : []
+    SEEN_PERSON_IDS = new Set(arrPeople.map(Number).filter(Boolean))
+  } catch (err) {
+    SEEN_PERSON_IDS = new Set()
+  }
 }
 
 function saveSeenGhosts() {
   localStorage.setItem(CODEX_STORAGE_KEY, JSON.stringify(Array.from(SEEN_GHOST_IDS).sort((a, b) => a - b)))
+}
+
+function saveSeenPeople() {
+  localStorage.setItem(PEOPLE_CODEX_STORAGE_KEY, JSON.stringify(Array.from(SEEN_PERSON_IDS).sort((a, b) => a - b)))
 }
 
 function markSeenGhosts(slots) {
@@ -296,12 +327,36 @@ function markSeenGhosts(slots) {
   if (changed) saveSeenGhosts()
 }
 
+function markSeenPerson(slot) {
+  if (!slot || !slot.id) return
+  if (!SEEN_PERSON_IDS.has(slot.id)) {
+    SEEN_PERSON_IDS.add(slot.id)
+    saveSeenPeople()
+  }
+}
+
 function collectedGhostCount() {
   return ACTIVE_GHOST_SLOTS.filter((slot) => SEEN_GHOST_IDS.has(slot.id)).length
 }
 
 function totalGhostCount() {
   return ACTIVE_GHOST_SLOTS.length || GHOST_SLOTS.length
+}
+
+function collectedPeopleCount() {
+  return ACTIVE_PERSON_SLOTS.filter((slot) => SEEN_PERSON_IDS.has(slot.id)).length
+}
+
+function totalPeopleCount() {
+  return ACTIVE_PERSON_SLOTS.length || PERSON_SLOTS.length
+}
+
+function collectedTotalCount() {
+  return collectedGhostCount() + collectedPeopleCount()
+}
+
+function totalCodexCount() {
+  return totalGhostCount() + totalPeopleCount()
 }
 
 function startGame(mode) {
@@ -514,8 +569,15 @@ function pointerDown(x, y) {
     return
   }
 
-  if (gameState === 'rules' || gameState === 'codex') {
+  if (gameState === 'rules') {
     if (pointInRect(x, y, screenBackButton)) gameState = 'home'
+    return
+  }
+
+  if (gameState === 'codex') {
+    if (pointInRect(x, y, screenBackButton)) gameState = 'home'
+    else if (pointInRect(x, y, codexTabs.ghosts)) codexTab = 'ghosts'
+    else if (pointInRect(x, y, codexTabs.people)) codexTab = 'people'
     return
   }
 
@@ -681,6 +743,7 @@ function update() {
   if (roomContent === 'fake' && (doorOpen > 0.08 || ghostEyeActive())) {
     contentVisible = true
     hasSeenContent = true
+    markSeenPerson(personSlot)
   }
 
   // 空门也需要能封印：只要开过一点并确认是空房，关门后就显示封印按钮。
@@ -949,7 +1012,8 @@ function drawArtRoom(frameRect, options = {}) {
   const {
     includeLargeDoor = true,
     includeContent = true,
-    depthScale = 1
+    depthScale = 1,
+    innerDoorAlpha = ART_LAYOUT.innerDoorAlpha
   } = options
 
   const open = getOpeningRect(frameRect)
@@ -963,7 +1027,7 @@ function drawArtRoom(frameRect, options = {}) {
     if (SHOW_WALL_AND_FLOOR) {
       // 6/5. 缩小门 + 缩小门框
       // 先画一层深处门，再由墙壁/地板压出空间层次。
-      drawInnerDoorSet(open, depthScale)
+      drawInnerDoorSet(open, depthScale, innerDoorAlpha)
 
       // 4. 墙壁：房间内部墙壁比外层更暗。
       drawImageCover(ASSETS.wall, open.x, open.y, open.w, open.h)
@@ -981,7 +1045,7 @@ function drawArtRoom(frameRect, options = {}) {
 
     // 测试版：不管鬼 / 人 / 空房间，背景只保留黑底里的深处小门。
     // 这样可以先判断“无限门”的转场和构图是否成立。
-    drawInnerDoorSet(open, depthScale)
+    drawInnerDoorSet(open, depthScale, innerDoorAlpha)
 
     if (includeContent) drawRoomContent(open)
   })
@@ -1182,9 +1246,15 @@ function drawEnterTransition(baseFrameRect) {
     ctx.fillRect(0, 0, W, H)
   }
 
+  const transitionDoorAlpha = lerp(ART_LAYOUT.innerDoorAlpha, 1, smoothstep((morph - 0.08) / 0.92))
+
   ctx.save()
   ctx.setTransform(DPR * scale, 0, 0, DPR * scale, DPR * tx, DPR * ty)
-  drawArtRoom(baseFrameRect, { includeLargeDoor: true, includeContent: true })
+  drawArtRoom(baseFrameRect, {
+    includeLargeDoor: true,
+    includeContent: true,
+    innerDoorAlpha: transitionDoorAlpha
+  })
   ctx.restore()
 
   // 末尾只加很轻的暗角，避免下一间 reset 时有硬切感。
@@ -1306,12 +1376,45 @@ function drawHomeMenu() {
 
   drawPlainMenuButton(menuButtons.start, '开始游戏', '选择简单 / 困难版本', '#d8bd75')
   drawPlainMenuButton(menuButtons.rules, '游戏规则', '开门、确认、封印', '#6f8f75')
-  drawPlainMenuButton(menuButtons.codex, '图 鉴', `已收集 ${collectedGhostCount()} / ${totalGhostCount()}`, '#9f2020')
+  drawPlainMenuButton(menuButtons.codex, '图 鉴', `已收集 ${collectedTotalCount()} / ${totalCodexCount()}`, '#9f2020')
 
   ctx.fillStyle = 'rgba(255,255,255,0.42)'
   ctx.font = '13px sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText('见到新的鬼，就会在图鉴里点亮', W / 2, H * 0.84)
+  ctx.fillText('见到新的鬼或人物，就会在图鉴里点亮', W / 2, H * 0.84)
+}
+
+function wrapTextLines(text, maxWidth, font) {
+  ctx.font = font
+  const result = []
+  let line = ''
+  for (const ch of text) {
+    const test = line + ch
+    if (ctx.measureText(test).width > maxWidth && line) {
+      result.push(line)
+      line = ch
+    } else {
+      line = test
+    }
+  }
+  if (line) result.push(line)
+  return result
+}
+
+function drawWrappedParagraphs(lines, x, y, maxWidth, font, lineHeight, paragraphGap) {
+  ctx.font = font
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  let cy = y
+  lines.forEach((line) => {
+    const wrapped = wrapTextLines(line, maxWidth, font)
+    wrapped.forEach((part) => {
+      ctx.fillText(part, x, cy)
+      cy += lineHeight
+    })
+    cy += paragraphGap
+  })
+  return cy
 }
 
 function drawRulesScreen() {
@@ -1330,13 +1433,13 @@ function drawRulesScreen() {
     '3. 看到人或空房：不要乱封，开到底进入下一间。',
     '4. 多只鬼需要贴多张符，但按钮不会提示数量。',
     '5. 关门后鬼会退回原位，可以多次确认。',
-    '6. 见到新鬼后，会自动点亮图鉴。'
+    '6. 见到新鬼或新人物后，会自动点亮对应图鉴。'
   ]
 
-  const boxX = W * 0.09
-  const boxY = H * 0.24
-  const boxW = W * 0.82
-  const boxH = Math.min(H * 0.56, 360)
+  const boxX = W * 0.08
+  const boxY = H * 0.235
+  const boxW = W * 0.84
+  const boxH = Math.min(H * 0.61, 430)
   ctx.fillStyle = 'rgba(18,18,18,0.92)'
   roundRect(boxX, boxY, boxW, boxH, 18)
   ctx.fill()
@@ -1346,10 +1449,70 @@ function drawRulesScreen() {
   ctx.stroke()
 
   ctx.fillStyle = 'rgba(255,255,255,0.84)'
+  const fontSize = W < 380 ? 14 : 15
+  const font = `${fontSize}px sans-serif`
+  const lineHeight = fontSize + 8
+  drawWrappedParagraphs(lines, boxX + 20, boxY + 38, boxW - 40, font, lineHeight, 8)
+}
+
+function drawCodexTab(rect, label, active) {
+  ctx.fillStyle = active ? 'rgba(139,30,30,0.94)' : 'rgba(18,18,18,0.92)'
+  roundRect(rect.x, rect.y, rect.w, rect.h, 12)
+  ctx.fill()
+  ctx.strokeStyle = active ? 'rgba(245,223,155,0.85)' : 'rgba(255,255,255,0.18)'
+  ctx.lineWidth = 1.5
+  roundRect(rect.x, rect.y, rect.w, rect.h, 12)
+  ctx.stroke()
+  ctx.fillStyle = active ? '#f5df9b' : 'rgba(255,255,255,0.62)'
   ctx.font = '15px sans-serif'
-  ctx.textAlign = 'left'
-  lines.forEach((line, i) => {
-    ctx.fillText(line, boxX + 22, boxY + 42 + i * 42)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2)
+}
+
+function drawCodexGrid(slots, assetGroup, seenSet, startY) {
+  const cols = 3
+  const gap = 12
+  const gridW = Math.min(W * 0.86, 390)
+  const cellW = (gridW - gap * (cols - 1)) / cols
+  const cellH = Math.min(cellW * 1.12, (H - startY - 30 - gap * 3) / 4)
+  const startX = (W - gridW) / 2
+
+  slots.forEach((slot, i) => {
+    const col = i % cols
+    const row = Math.floor(i / cols)
+    const x = startX + col * (cellW + gap)
+    const y = startY + row * (cellH + gap)
+    const hasAsset = !!CHARACTER_ASSETS[assetGroup][slot.id]
+    const seen = seenSet.has(slot.id)
+
+    ctx.fillStyle = seen ? 'rgba(28,24,20,0.95)' : 'rgba(12,12,12,0.92)'
+    roundRect(x, y, cellW, cellH, 14)
+    ctx.fill()
+    ctx.strokeStyle = seen ? 'rgba(245,223,155,0.75)' : 'rgba(255,255,255,0.16)'
+    ctx.lineWidth = 1.5
+    roundRect(x, y, cellW, cellH, 14)
+    ctx.stroke()
+
+    const img = CHARACTER_ASSETS[assetGroup][slot.id]
+    if (seen && img) {
+      drawImageContain(img, x + 8, y + 8, cellW - 16, cellH - 38)
+      ctx.fillStyle = '#f5df9b'
+      ctx.font = '12px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillText(slot.name, x + cellW / 2, y + cellH - 14)
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'
+      ctx.font = '32px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('?', x + cellW / 2, y + cellH * 0.43)
+      ctx.fillStyle = 'rgba(255,255,255,0.36)'
+      ctx.font = '11px sans-serif'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillText(hasAsset ? '未发现' : '未放图', x + cellW / 2, y + cellH - 14)
+    }
   })
 }
 
@@ -1361,58 +1524,16 @@ function drawCodexScreen() {
   ctx.font = '32px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
-  ctx.fillText('鬼怪图鉴', W / 2, H * 0.14)
+  ctx.fillText('图 鉴', W / 2, H * 0.135)
 
-  ctx.fillStyle = 'rgba(245,223,155,0.82)'
-  ctx.font = '14px sans-serif'
-  ctx.fillText(`已收集 ${collectedGhostCount()} / ${totalGhostCount()}`, W / 2, H * 0.14 + 30)
+  drawCodexTab(codexTabs.ghosts, `鬼图鉴 ${collectedGhostCount()}/${totalGhostCount()}`, codexTab === 'ghosts')
+  drawCodexTab(codexTabs.people, `人物图鉴 ${collectedPeopleCount()}/${totalPeopleCount()}`, codexTab === 'people')
 
-  const cols = 3
-  const gap = 12
-  const gridW = Math.min(W * 0.86, 390)
-  const cellW = (gridW - gap * (cols - 1)) / cols
-  const cellH = cellW * 1.18
-  const startX = (W - gridW) / 2
-  const startY = H * 0.23
-
-  GHOST_SLOTS.forEach((slot, i) => {
-    const col = i % cols
-    const row = Math.floor(i / cols)
-    const x = startX + col * (cellW + gap)
-    const y = startY + row * (cellH + gap)
-    const hasAsset = !!CHARACTER_ASSETS.ghosts[slot.id]
-    const seen = SEEN_GHOST_IDS.has(slot.id)
-
-    ctx.fillStyle = seen ? 'rgba(28,24,20,0.95)' : 'rgba(12,12,12,0.92)'
-    roundRect(x, y, cellW, cellH, 14)
-    ctx.fill()
-    ctx.strokeStyle = seen ? 'rgba(245,223,155,0.75)' : 'rgba(255,255,255,0.16)'
-    ctx.lineWidth = 1.5
-    roundRect(x, y, cellW, cellH, 14)
-    ctx.stroke()
-
-    const img = CHARACTER_ASSETS.ghosts[slot.id]
-    if (seen && img) {
-      ctx.save()
-      ctx.globalAlpha = hasAsset ? 1 : 0.3
-      drawImageContain(img, x + 10, y + 8, cellW - 20, cellH - 42)
-      ctx.restore()
-      ctx.fillStyle = '#f5df9b'
-      ctx.font = '13px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText(slot.name, x + cellW / 2, y + cellH - 16)
-    } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'
-      ctx.font = '34px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('?', x + cellW / 2, y + cellH * 0.43)
-      ctx.fillStyle = 'rgba(255,255,255,0.36)'
-      ctx.font = '12px sans-serif'
-      ctx.textBaseline = 'alphabetic'
-      ctx.fillText(hasAsset ? '未发现' : '未放图', x + cellW / 2, y + cellH - 16)
-    }
-  })
+  if (codexTab === 'people') {
+    drawCodexGrid(PERSON_SLOTS, 'people', SEEN_PERSON_IDS, H * 0.255)
+  } else {
+    drawCodexGrid(GHOST_SLOTS, 'ghosts', SEEN_GHOST_IDS, H * 0.255)
+  }
 }
 
 function drawDifficultyMenu() {
@@ -1467,6 +1588,38 @@ function drawDifficultyMenu() {
   ctx.fillText('开门确认；见鬼后关门封印，多只鬼要贴多张符', W / 2, H * 0.82)
 }
 
+function drawGameUI() {
+  drawBackButton(backButton, '主页')
+
+  ctx.fillStyle = '#fff'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.font = '22px sans-serif'
+  ctx.fillText(`第 ${room} 间`, W / 2, 48)
+
+  ctx.font = '14px sans-serif'
+  ctx.fillText(`${DIFFICULTY[difficultyMode].name}｜最高纪录：${best}`, W / 2, 73)
+
+  ctx.fillStyle = 'rgba(245,223,155,0.88)'
+  ctx.font = '13px sans-serif'
+  ctx.textAlign = 'right'
+  ctx.fillText(`图鉴 ${collectedTotalCount()} / ${totalCodexCount()}`, W - 14, 34)
+
+  if (ghostEyeActive()) {
+    ctx.fillStyle = 'rgba(245,223,155,0.94)'
+    ctx.font = '14px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText(`鬼眼开启：${ghostEyeLeftSeconds().toFixed(1)}s｜门透明度 60%`, W / 2, 100)
+  }
+
+  ctx.fillStyle = 'rgba(255,255,255,0.28)'
+  ctx.font = '11px sans-serif'
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText(GAME_VERSION, W - 10, H - 12)
+}
+
 function draw() {
   if (!assetsReady) {
     drawLoading()
@@ -1496,22 +1649,6 @@ function draw() {
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, W, H)
 
-  ctx.fillStyle = '#fff'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.font = '22px sans-serif'
-  ctx.fillText(`第 ${room} 间`, W / 2, 48)
-
-  ctx.font = '14px sans-serif'
-  ctx.fillText(`${DIFFICULTY[difficultyMode].name}｜最高纪录：${best}`, W / 2, 73)
-
-  drawBackButton(backButton, '主页')
-
-  ctx.fillStyle = 'rgba(245,223,155,0.88)'
-  ctx.font = '13px sans-serif'
-  ctx.textAlign = 'right'
-  ctx.fillText(`图鉴 ${collectedGhostCount()} / ${totalGhostCount()}`, W - 14, 34)
-
   const frameRect = getFrameRect()
   if (enteringRoom) {
     drawEnterTransition(frameRect)
@@ -1521,24 +1658,13 @@ function draw() {
     drawSealButton()
   }
 
-  if (ghostEyeActive()) {
-    ctx.fillStyle = 'rgba(245,223,155,0.94)'
-    ctx.font = '14px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'alphabetic'
-    ctx.fillText(`鬼眼开启：${ghostEyeLeftSeconds().toFixed(1)}s｜门透明度 60%`, W / 2, 100)
-  }
-
-  ctx.fillStyle = 'rgba(255,255,255,0.28)'
-  ctx.font = '11px sans-serif'
-  ctx.textAlign = 'right'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillText(GAME_VERSION, W - 10, H - 12)
-
   if (roomFadeIn > 0 && !enteringRoom) {
     ctx.fillStyle = `rgba(0,0,0,${roomFadeIn})`
     ctx.fillRect(0, 0, W, H)
   }
+
+  // 游戏上方 UI 最后绘制，确保不会被放大的门或转场盖住。
+  drawGameUI()
 
   if (gameState === 'gameover') {
     ctx.fillStyle = 'rgba(0,0,0,0.82)'
