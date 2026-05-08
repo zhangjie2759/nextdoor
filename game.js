@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.9.1
-// 本版更新：修复Boss房鬼眼/状态机导致无法开门的问题；鬼眼可看到Boss但不会直接进入贴符阶段
+// 版本：v0.9.3
+// 本版更新：修复第25关/强制Boss战黑屏；Boss房间出现时不会被新房间黑场遮住
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.9.1'
-const GAME_VERSION_NOTE = 'Boss开门确认修复版'
+const GAME_VERSION = 'v0.9.3'
+const GAME_VERSION_NOTE = 'Boss开门修复版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -480,6 +480,13 @@ function shouldStartBossRoom() {
 }
 
 function startBossBattle(forced = false) {
+  // Boss房间不能吃到上一间切房时留下的黑场。
+  // 之前第25关强制Boss时，newRoom() 会先进入 bossActive，update() 又在Boss分支提前 return，
+  // 导致 roomFadeIn 没机会衰减，于是画面一直黑屏。
+  roomFadeIn = 0
+  enteringRoom = false
+  isChangingRoom = false
+
   bossActive = true
   bossPhase = 'reveal'
   bossSeen = false
@@ -847,6 +854,27 @@ function pointerUp() {
   if (gameState !== 'playing') return
   if (isChangingRoom) return
 
+  // Boss确认阶段不使用普通门的“开到一半就自动全开”逻辑。
+  // 否则玩家开门确认 Boss 后，门会继续自动打开，无法顺利回到“关门贴符”的阶段。
+  if (bossActive && bossPhase === 'reveal') {
+    if (doorOpen > BOSS_CONFIRM_OPEN) {
+      contentVisible = true
+      hasSeenContent = true
+      bossSeen = true
+    }
+
+    // Boss一旦被确认，松手后门自动慢慢关回去；关上后进入疯狂贴封印。
+    // 如果还没确认成功，松手也先回关，鼓励玩家重新开门确认。
+    doorTarget = 0
+    if (Math.abs(doorOpen - doorTarget) < 0.015) {
+      doorOpen = doorTarget
+      doorAutoMoving = false
+    } else {
+      doorAutoMoving = true
+    }
+    return
+  }
+
   doorTarget = doorOpen >= DOOR_SNAP_THRESHOLD ? 1 : 0
 
   if (Math.abs(doorOpen - doorTarget) < 0.015) {
@@ -881,6 +909,11 @@ canvas.addEventListener('pointercancel', (e) => {
 function update() {
   if (gameState !== 'playing') return
 
+  // 黑场淡入/淡出必须优先更新，不能被 Boss 分支提前 return 卡住。
+  if (roomFadeIn > 0 && !enteringRoom) {
+    roomFadeIn = Math.max(0, roomFadeIn - ROOM_FADE_IN_SPEED)
+  }
+
   if (bossActive) {
     bossShake = Math.max(0, bossShake - 0.08)
     bossSealFlash = Math.max(0, bossSealFlash - 0.1)
@@ -914,6 +947,14 @@ function update() {
       }
 
       // 只有“开门确认过Boss”之后，再把门关回去，才开始疯狂贴封印。
+      // v0.9.3：确认后强制把目标设为关门，避免 Boss 房门停在打开状态卡住。
+      if (bossSeen && !dragging) {
+        doorTarget = 0
+        if (doorOpen > BOSS_START_SEAL_OPEN) {
+          doorAutoMoving = true
+        }
+      }
+
       if (bossSeen && !dragging && doorOpen <= BOSS_START_SEAL_OPEN) {
         beginBossSealing()
       }
@@ -939,10 +980,6 @@ function update() {
   ctx.textAlign = 'right'
   ctx.textBaseline = 'alphabetic'
   ctx.fillText(GAME_VERSION, W - 10, H - 12)
-
-  if (roomFadeIn > 0 && !enteringRoom) {
-    roomFadeIn = Math.max(0, roomFadeIn - ROOM_FADE_IN_SPEED)
-  }
 
   if (sealSuccess) {
     sealAnim += 0.08
