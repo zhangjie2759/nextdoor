@@ -8,8 +8,8 @@
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.8.4'
-const GAME_VERSION_NOTE = '多鬼封印 + 空门封印版'
+const GAME_VERSION = 'v0.8.5'
+const GAME_VERSION_NOTE = '封印按钮防剧透版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -963,10 +963,8 @@ function drawSealButton() {
   ctx.font = '24px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
-  const sealText = roomContent === 'ghost' && sealCountRequired > 1
-    ? `封 印 ${Math.min(sealCountDone + 1, sealCountRequired)}/${sealCountRequired}`
-    : '封 印'
-  ctx.fillText(sealText, W / 2, sealButton.y + 37)
+  // 按钮文字永远相同，避免多鬼房提前剧透需要封印几次。
+  ctx.fillText('封 印', W / 2, sealButton.y + 37)
 }
 
 function drawStaticSeal(open, index, total) {
