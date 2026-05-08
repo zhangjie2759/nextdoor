@@ -3,13 +3,13 @@
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
 // 版本：v0.8.9
-// 本版更新：第一版 Boss 战 / 随机出现 / 强制大关 Boss / 血条倒计时
+// 本版更新：Boss房先开门确认；关门后疯狂贴封印；贴慢了门会被顶开
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.8.9'
-const GAME_VERSION_NOTE = 'Boss战第一版'
+const GAME_VERSION = 'v0.9.0'
+const GAME_VERSION_NOTE = 'Boss压门版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -171,6 +171,14 @@ let bossAttemptedStage = 0
 let bossDefeatedStage = 0
 let bossShake = 0
 let bossForced = false
+let bossPhase = 'idle' // idle / reveal / sealing
+let bossSeen = false
+let bossDoorPressure = 0
+let bossSealFlash = 0
+
+const BOSS_CONFIRM_OPEN = 0.32
+const BOSS_START_SEAL_OPEN = 0.06
+const BOSS_BASE_PRESSURE = 0.13
 
 const sealButton = { x: 0, y: 0, w: 0, h: 58 }
 const bossButton = { x: 0, y: 0, w: 0, h: 76 }
@@ -392,6 +400,10 @@ function startGame(mode) {
   room = 1
   best = getStoredBest(mode)
   bossActive = false
+  bossPhase = 'idle'
+  bossSeen = false
+  bossDoorPressure = 0
+  bossSealFlash = 0
   bossScheduledStage = 0
   bossScheduledRoom = 0
   bossAttemptedStage = 0
@@ -469,6 +481,8 @@ function shouldStartBossRoom() {
 
 function startBossBattle(forced = false) {
   bossActive = true
+  bossPhase = 'reveal'
+  bossSeen = false
   bossStage = getBossStageForRoom(room)
   const config = getBossConfig(bossStage)
   bossTimeTotal = config.time
@@ -478,17 +492,44 @@ function startBossBattle(forced = false) {
   bossForced = forced
   bossAttemptedStage = bossStage
   bossShake = 0
+  bossDoorPressure = 0
+  bossSealFlash = 0
 
   dragging = false
   doorAutoMoving = false
-  doorOpen = 1
+  doorOpen = 0
+  doorTarget = 0
   roomContent = 'boss'
-  hasSeenContent = true
-  contentVisible = true
+  hasSeenContent = false
+  contentVisible = false
+}
+
+function beginBossSealing() {
+  bossPhase = 'sealing'
+  bossTimeLeft = bossTimeTotal
+  bossDoorPressure = BOSS_BASE_PRESSURE
+  doorOpen = bossDoorPressure
+  doorTarget = 0
+  doorAutoMoving = false
+  dragging = false
+}
+
+function getBossPressureSpeed() {
+  // 不点封印时，Boss 会在几秒内把门顶开；越后期压迫越明显。
+  const stageBoost = Math.min(0.055, (bossStage - 1) * 0.012)
+  const hpRatio = 1 - bossSealsDone / Math.max(1, bossSealsRequired)
+  const lowHpSlowdown = hpRatio < 0.3 ? -0.025 : 0
+  return 0.19 + stageBoost + lowHpSlowdown
+}
+
+function getBossSealPushBack() {
+  // 每贴一次符，把门缝压回去一点；不直接归零，保留拉扯感。
+  return 0.058
 }
 
 function completeBossBattle() {
   bossActive = false
+  bossPhase = 'idle'
   bossDefeatedStage = Math.max(bossDefeatedStage, bossStage)
   room = getBossStageEnd(bossStage) + 1
   if (room > best) {
@@ -505,6 +546,7 @@ function completeBossBattle() {
 function failBossBattle() {
   const stageEnd = getBossStageEnd(bossStage)
   bossActive = false
+  bossPhase = 'idle'
   if (bossForced || room >= stageEnd) {
     gameOver()
     return
@@ -727,18 +769,33 @@ function pointerDown(x, y) {
     gameState = 'home'
     isChangingRoom = false
     bossActive = false
+    bossPhase = 'idle'
     dragging = false
     doorAutoMoving = false
     return
   }
 
   if (bossActive) {
-    if (pointInRect(x, y, bossButton)) {
-      bossSealsDone++
-      bossShake = 1
-      if (bossSealsDone >= bossSealsRequired) completeBossBattle()
+    if (bossPhase === 'sealing') {
+      if (pointInRect(x, y, bossButton)) {
+        bossSealsDone++
+        bossShake = 1
+        bossSealFlash = 1
+        bossDoorPressure = Math.max(0.035, bossDoorPressure - getBossSealPushBack())
+        doorOpen = bossDoorPressure
+        if (bossSealsDone >= bossSealsRequired) completeBossBattle()
+      }
+      return
     }
-    return
+
+    // Boss房仍然要先开门确认。看到Boss后，必须关门，才进入疯狂贴封印阶段。
+    if (bossPhase === 'reveal') {
+      doorAutoMoving = false
+      dragging = true
+      startX = x
+      startDoorOpen = doorOpen
+      return
+    }
   }
 
   if (isChangingRoom) return
@@ -825,13 +882,45 @@ function update() {
   if (gameState !== 'playing') return
 
   if (bossActive) {
-    bossTimeLeft -= 1 / 60
     bossShake = Math.max(0, bossShake - 0.08)
-    if (bossTimeLeft <= 0) {
-      bossTimeLeft = 0
-      failBossBattle()
+    bossSealFlash = Math.max(0, bossSealFlash - 0.1)
+
+    if (doorAutoMoving && !dragging) {
+      const diff = doorTarget - doorOpen
+      const step = Math.min(Math.abs(diff), DOOR_AUTO_SPEED)
+      if (Math.abs(diff) <= DOOR_AUTO_SPEED) {
+        doorOpen = doorTarget
+        doorAutoMoving = false
+      } else {
+        doorOpen += Math.sign(diff) * step
+      }
     }
-    return
+
+    if (bossPhase === 'reveal') {
+      // 鬼眼可以提前看到Boss，属于玩家运气好；但仍然必须开门确认后关门才能贴符。
+      if (doorOpen > BOSS_CONFIRM_OPEN || ghostEyeActive()) {
+        contentVisible = true
+        hasSeenContent = true
+        bossSeen = true
+      }
+      if (bossSeen && !dragging && doorOpen <= BOSS_START_SEAL_OPEN) {
+        beginBossSealing()
+      }
+      return
+    }
+
+    if (bossPhase === 'sealing') {
+      bossTimeLeft -= 1 / 60
+      bossDoorPressure = Math.min(1, bossDoorPressure + getBossPressureSpeed() / 60)
+      doorOpen = bossDoorPressure
+      if (bossDoorPressure >= 1 || bossTimeLeft <= 0) {
+        bossDoorPressure = 1
+        doorOpen = 1
+        bossTimeLeft = Math.max(0, bossTimeLeft)
+        failBossBattle()
+      }
+      return
+    }
   }
 
   ctx.fillStyle = 'rgba(255,255,255,0.28)'
@@ -1757,72 +1846,100 @@ function drawBossBattle(frameRect) {
   const shakePower = bossShake * 8
   const sx = (Math.random() - 0.5) * shakePower
   const sy = (Math.random() - 0.5) * shakePower
+  const open = getOpeningRect(frameRect)
+  const hpRatio = clamp01(1 - bossSealsDone / Math.max(1, bossSealsRequired))
+  const pressure = clamp01(bossDoorPressure || doorOpen)
+  const panic = hpRatio < 0.3 ? 0.5 + 0.5 * Math.sin(performance.now() * 0.035) : 0.25 + 0.25 * Math.sin(performance.now() * 0.014)
+  const revealAlpha = bossPhase === 'reveal' && !bossSeen && !ghostEyeActive() ? clamp01((doorOpen - 0.06) / 0.28) : 1
 
   ctx.save()
   ctx.translate(sx, sy)
 
-  drawArtRoom(frameRect, { includeLargeDoor: false, includeContent: false, innerDoorAlpha: 0.8 })
+  // 先画没有前景门的房间，再把Boss和红光画在门后，最后再画门框与前景门。
+  drawArtRoom(frameRect, { includeLargeDoor: false, includeContent: false, innerDoorAlpha: 0.72 })
 
-  const open = getOpeningRect(frameRect)
-  const hpRatio = clamp01(1 - bossSealsDone / bossSealsRequired)
-  const panic = hpRatio < 0.3 ? 0.5 + 0.5 * Math.sin(performance.now() * 0.035) : 0.25 + 0.25 * Math.sin(performance.now() * 0.014)
+  clipRect(open, () => {
+    const glowCenterX = open.x + open.w * (0.5 + 0.04 * Math.sin(performance.now() * 0.006))
+    const glowCenterY = open.y + open.h * 0.46
+    const glowPower = bossPhase === 'sealing' ? 0.42 + pressure * 0.38 + panic * 0.18 : 0.22 + doorOpen * 0.38
+    const glow = ctx.createRadialGradient(glowCenterX, glowCenterY, open.w * 0.06, glowCenterX, glowCenterY, open.w * 0.78)
+    glow.addColorStop(0, `rgba(255,45,25,${glowPower})`)
+    glow.addColorStop(0.45, `rgba(125,0,0,${glowPower * 0.55})`)
+    glow.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = glow
+    ctx.fillRect(open.x - open.w * 0.25, open.y - open.h * 0.14, open.w * 1.5, open.h * 1.25)
 
-  // 门缝/房间红光
-  const glow = ctx.createRadialGradient(W / 2, open.y + open.h * 0.45, open.w * 0.08, W / 2, open.y + open.h * 0.45, open.w * 0.72)
-  glow.addColorStop(0, `rgba(255,40,25,${0.42 + panic * 0.22})`)
-  glow.addColorStop(0.45, `rgba(120,0,0,${0.22 + panic * 0.18})`)
-  glow.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.fillStyle = glow
-  ctx.fillRect(open.x - open.w * 0.25, open.y - open.h * 0.14, open.w * 1.5, open.h * 1.2)
+    // Boss 主体：优先复用已有鬼图，否则画一个更纯粹的幽灵剪影。
+    const bossImg = ACTIVE_GHOST_SLOTS[0] ? CHARACTER_ASSETS.ghosts[ACTIVE_GHOST_SLOTS[0].id] : null
+    const lunge = bossPhase === 'sealing' ? pressure * 0.16 : doorOpen * 0.05
+    const bossBottom = open.y + open.h * (0.86 + lunge * 0.18)
+    const bossH = open.h * (0.70 + lunge)
+    const bossW = open.w * (0.72 + lunge * 0.22)
 
-  // Boss主体：优先复用已有鬼图，否则画一个纯幽灵剪影。
-  const bossImg = ACTIVE_GHOST_SLOTS[0] ? CHARACTER_ASSETS.ghosts[ACTIVE_GHOST_SLOTS[0].id] : null
-  const bossBottom = open.y + open.h * 0.86
-  const bossH = open.h * (0.68 + (1 - hpRatio) * 0.08)
-  const bossW = open.w * 0.72
-
-  ctx.save()
-  ctx.shadowColor = `rgba(255,0,0,${0.8 + panic * 0.2})`
-  ctx.shadowBlur = 28 + panic * 28
-  if (bossImg) {
-    drawImageContainBottom(bossImg, W / 2, bossBottom, bossW, bossH)
-  } else {
-    ctx.fillStyle = '#0a0a0a'
-    roundRect(W / 2 - bossW * 0.28, bossBottom - bossH, bossW * 0.56, bossH, 46)
-    ctx.fill()
-    ctx.fillStyle = '#f1e9d8'
-    ctx.beginPath()
-    ctx.ellipse(W / 2, bossBottom - bossH * 0.64, bossW * 0.16, bossH * 0.18, 0, 0, Math.PI * 2)
-    ctx.fill()
-  }
-  ctx.restore()
-
-  // 已贴封条贴在Boss身上，不显示总数，避免变成纯数字反馈。
-  const shownSeals = Math.min(bossSealsDone, 18)
-  for (let i = 0; i < shownSeals; i++) {
-    const col = i % 6
-    const row = Math.floor(i / 6)
-    const x = W / 2 + (col - 2.5) * 30
-    const y = open.y + open.h * 0.33 + row * 44
     ctx.save()
-    ctx.translate(x, y)
-    ctx.rotate((col - 2.5) * 0.035)
-    ctx.fillStyle = '#e5c76c'
-    ctx.fillRect(-11, -28, 22, 56)
-    ctx.strokeStyle = '#9f2020'
-    ctx.lineWidth = 1.5
-    ctx.strokeRect(-8, -24, 16, 48)
-    ctx.fillStyle = '#9f2020'
-    ctx.font = '17px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText('封', 0, 0)
+    ctx.globalAlpha = revealAlpha
+    ctx.shadowColor = `rgba(255,0,0,${0.72 + panic * 0.28})`
+    ctx.shadowBlur = 24 + panic * 32 + pressure * 18
+    if (bossImg) {
+      drawImageContainBottom(bossImg, W / 2, bossBottom, bossW, bossH)
+    } else {
+      ctx.fillStyle = '#050505'
+      roundRect(W / 2 - bossW * 0.28, bossBottom - bossH, bossW * 0.56, bossH, 46)
+      ctx.fill()
+      ctx.fillStyle = '#f1e9d8'
+      ctx.beginPath()
+      ctx.ellipse(W / 2, bossBottom - bossH * 0.64, bossW * 0.16, bossH * 0.18, 0, 0, Math.PI * 2)
+      ctx.fill()
+    }
     ctx.restore()
+
+    // 已贴封条贴在Boss/门缝附近，数量不写出来，避免变成数字剧透。
+    const shownSeals = Math.min(bossSealsDone, 18)
+    for (let i = 0; i < shownSeals; i++) {
+      const col = i % 6
+      const row = Math.floor(i / 6)
+      const x = W / 2 + (col - 2.5) * 30
+      const y = open.y + open.h * 0.30 + row * 44
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.rotate((col - 2.5) * 0.035)
+      ctx.fillStyle = '#e5c76c'
+      ctx.fillRect(-11, -28, 22, 56)
+      ctx.strokeStyle = '#9f2020'
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(-8, -24, 16, 48)
+      ctx.fillStyle = '#9f2020'
+      ctx.font = '17px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('封', 0, 0)
+      ctx.restore()
+    }
+  })
+
+  // 门框和前景门最后画：Boss封印阶段会把门硬顶开；每贴一次会压回去。
+  ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+  const slide = doorOpen * open.w * ART_LAYOUT.largeDoorSlide
+  const doorX = open.x - slide
+  const doorAlpha = ghostEyeActive() ? 0.6 : 1
+  drawImageCoverAlpha(ASSETS.door, doorX, open.y, open.w, open.h, doorAlpha)
+
+  // 门缝红光必须在门上方再补一层，让“压不住”的感觉更明显。
+  if (doorOpen > 0.02) {
+    const crackW = Math.max(3, open.w * Math.min(0.18, doorOpen * 0.18))
+    const crackX = open.x + open.w * (1 - Math.min(0.98, doorOpen * ART_LAYOUT.largeDoorSlide))
+    const crackAlpha = bossPhase === 'sealing' ? 0.35 + pressure * 0.45 : 0.22 + doorOpen * 0.32
+    const g = ctx.createLinearGradient(crackX - crackW, open.y, crackX + crackW * 2, open.y)
+    g.addColorStop(0, 'rgba(255,0,0,0)')
+    g.addColorStop(0.5, `rgba(255,44,20,${crackAlpha})`)
+    g.addColorStop(1, 'rgba(255,0,0,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(crackX - crackW, open.y + open.h * 0.05, crackW * 3, open.h * 0.9)
   }
 
   ctx.restore()
 
-  // 顶部Boss血条和倒计时
+  // 顶部 Boss 血条 / 状态提示。
   const barW = Math.min(W * 0.78, 360)
   const barH = 16
   const barX = (W - barW) / 2
@@ -1842,9 +1959,24 @@ function drawBossBattle(frameRect) {
   ctx.font = '15px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
-  ctx.fillText(`第 ${bossStage} 大关 Boss｜${bossTimeLeft.toFixed(1)}s`, W / 2, barY - 10)
+  if (bossPhase === 'reveal') {
+    const hint = bossSeen ? '关上门，准备封印！' : (ghostEyeActive() ? '鬼眼看见了 Boss，开门确认！' : '门后有红光，开门确认！')
+    ctx.fillText(`第 ${bossStage} 大关 Boss｜${hint}`, W / 2, barY - 10)
+  } else {
+    ctx.fillText(`第 ${bossStage} 大关 Boss｜${bossTimeLeft.toFixed(1)}s`, W / 2, barY - 10)
+  }
 
-  drawBossButton()
+  if (bossPhase === 'sealing') {
+    // 门缝危险条：越满说明门越要被顶开。
+    const pressureY = barY + 24
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    roundRect(barX, pressureY, barW, 8, 4)
+    ctx.fill()
+    ctx.fillStyle = `rgba(255,70,35,${0.65 + panic * 0.25})`
+    roundRect(barX, pressureY, barW * pressure, 8, 4)
+    ctx.fill()
+    drawBossButton()
+  }
 }
 
 function drawGameUI() {
