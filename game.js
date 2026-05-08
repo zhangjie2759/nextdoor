@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.8.9
-// 本版更新：Boss房先开门确认；关门后疯狂贴封印；贴慢了门会被顶开
+// 版本：v0.9.1
+// 本版更新：修复Boss房鬼眼/状态机导致无法开门的问题；鬼眼可看到Boss但不会直接进入贴符阶段
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.9.0'
-const GAME_VERSION_NOTE = 'Boss压门版'
+const GAME_VERSION = 'v0.9.1'
+const GAME_VERSION_NOTE = 'Boss开门确认修复版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -897,12 +897,23 @@ function update() {
     }
 
     if (bossPhase === 'reveal') {
-      // 鬼眼可以提前看到Boss，属于玩家运气好；但仍然必须开门确认后关门才能贴符。
-      if (doorOpen > BOSS_CONFIRM_OPEN || ghostEyeActive()) {
+      // 鬼眼可以提前看到Boss，属于玩家运气好；
+      // 但鬼眼只负责“看见”，不能替代“开门确认”。
+      // 之前的 bug 是：鬼眼状态下 bossSeen 会在门没打开时直接变 true，
+      // 下一帧又因为 doorOpen 仍然接近 0，立刻进入 sealing，导致玩家感觉Boss房打不开门。
+      if (ghostEyeActive()) {
+        contentVisible = true
+        hasSeenContent = true
+      }
+
+      // 必须真的把门打开到确认阈值，才算完成Boss确认。
+      if (doorOpen > BOSS_CONFIRM_OPEN) {
         contentVisible = true
         hasSeenContent = true
         bossSeen = true
       }
+
+      // 只有“开门确认过Boss”之后，再把门关回去，才开始疯狂贴封印。
       if (bossSeen && !dragging && doorOpen <= BOSS_START_SEAL_OPEN) {
         beginBossSealing()
       }
