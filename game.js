@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.8.8
-// 本版更新：规则页换行 / UI置顶 / 转场自然变亮 / 人物鬼怪双图鉴
+// 版本：v0.8.9
+// 本版更新：第一版 Boss 战 / 随机出现 / 强制大关 Boss / 血条倒计时
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.8.8'
-const GAME_VERSION_NOTE = '双图鉴 / 转场优化版'
+const GAME_VERSION = 'v0.8.9'
+const GAME_VERSION_NOTE = 'Boss战第一版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -151,7 +151,29 @@ const ROOM_FADE_IN_SPEED = 0.06
 const GHOST_EYE_DURATION_MS = 10000
 let ghostEyeUntil = 0
 
+const BOSS_CONFIGS = [
+  { stage: 1, time: 7.0, seals: 16 },
+  { stage: 2, time: 6.5, seals: 20 },
+  { stage: 3, time: 6.0, seals: 24 },
+  { stage: 4, time: 5.8, seals: 28 },
+  { stage: 5, time: 5.5, seals: 30 }
+]
+
+let bossActive = false
+let bossStage = 1
+let bossTimeLeft = 0
+let bossTimeTotal = 7
+let bossSealsRequired = 16
+let bossSealsDone = 0
+let bossScheduledStage = 0
+let bossScheduledRoom = 0
+let bossAttemptedStage = 0
+let bossDefeatedStage = 0
+let bossShake = 0
+let bossForced = false
+
 const sealButton = { x: 0, y: 0, w: 0, h: 58 }
+const bossButton = { x: 0, y: 0, w: 0, h: 76 }
 
 const menuButtons = {
   start: { x: 0, y: 0, w: 0, h: 68 },
@@ -255,6 +277,11 @@ function resizeCanvas() {
   screenBackButton.y = Math.max(18, H * 0.025)
   screenBackButton.w = 72
   screenBackButton.h = 38
+
+  bossButton.w = Math.min(W * 0.78, 360)
+  bossButton.h = 78
+  bossButton.x = (W - bossButton.w) / 2
+  bossButton.y = H - bossButton.h - Math.max(26, H * 0.035)
 
   const tabW = Math.min(W * 0.34, 150)
   const tabGap = 12
@@ -364,6 +391,11 @@ function startGame(mode) {
   difficultyMode = mode
   room = 1
   best = getStoredBest(mode)
+  bossActive = false
+  bossScheduledStage = 0
+  bossScheduledRoom = 0
+  bossAttemptedStage = 0
+  bossDefeatedStage = 0
   gameState = 'playing'
   roomFadeIn = 0
   newRoom()
@@ -397,6 +429,93 @@ function ghostEyeLeftSeconds() {
 
 function activateGhostEye() {
   ghostEyeUntil = performance.now() + GHOST_EYE_DURATION_MS
+}
+
+function getBossStageForRoom(value = room) {
+  return Math.floor((value - 1) / 25) + 1
+}
+
+function getBossStageStart(stage) {
+  return (stage - 1) * 25 + 1
+}
+
+function getBossStageEnd(stage) {
+  return stage * 25
+}
+
+function getBossConfig(stage) {
+  return BOSS_CONFIGS[Math.min(stage, BOSS_CONFIGS.length) - 1] || BOSS_CONFIGS[BOSS_CONFIGS.length - 1]
+}
+
+function ensureBossScheduleForStage(stage) {
+  if (bossScheduledStage === stage && bossScheduledRoom) return
+  bossScheduledStage = stage
+  bossAttemptedStage = 0
+  bossDefeatedStage = Math.max(bossDefeatedStage, stage - 1)
+  const minRoom = getBossStageStart(stage) + 19
+  const maxRoom = getBossStageEnd(stage)
+  bossScheduledRoom = minRoom + Math.floor(Math.random() * (maxRoom - minRoom + 1))
+}
+
+function shouldStartBossRoom() {
+  const stage = getBossStageForRoom(room)
+  ensureBossScheduleForStage(stage)
+  if (bossDefeatedStage >= stage) return false
+  const stageEnd = getBossStageEnd(stage)
+  if (room >= stageEnd) return true
+  if (bossAttemptedStage === stage) return false
+  return room >= bossScheduledRoom
+}
+
+function startBossBattle(forced = false) {
+  bossActive = true
+  bossStage = getBossStageForRoom(room)
+  const config = getBossConfig(bossStage)
+  bossTimeTotal = config.time
+  bossTimeLeft = config.time
+  bossSealsRequired = config.seals
+  bossSealsDone = 0
+  bossForced = forced
+  bossAttemptedStage = bossStage
+  bossShake = 0
+
+  dragging = false
+  doorAutoMoving = false
+  doorOpen = 1
+  roomContent = 'boss'
+  hasSeenContent = true
+  contentVisible = true
+}
+
+function completeBossBattle() {
+  bossActive = false
+  bossDefeatedStage = Math.max(bossDefeatedStage, bossStage)
+  room = getBossStageEnd(bossStage) + 1
+  if (room > best) {
+    best = room
+    saveBest()
+  }
+  bossScheduledStage = 0
+  bossScheduledRoom = 0
+  bossAttemptedStage = 0
+  roomFadeIn = 0.55
+  newRoom()
+}
+
+function failBossBattle() {
+  const stageEnd = getBossStageEnd(bossStage)
+  bossActive = false
+  if (bossForced || room >= stageEnd) {
+    gameOver()
+    return
+  }
+  room++
+  if (room > best) {
+    best = room
+    saveBest()
+  }
+  roomFadeIn = 0.45
+  newRoom()
 }
 
 function randomContent() {
@@ -482,6 +601,13 @@ function newRoom() {
   doorOpen = 0
   doorTarget = 0
   doorAutoMoving = false
+  bossActive = false
+
+  if (shouldStartBossRoom()) {
+    startBossBattle(room >= getBossStageEnd(getBossStageForRoom(room)))
+    return
+  }
+
   roomContent = randomContent()
   ghostType = roomContent === 'ghost' ? randomGhostType() : 'normal'
   ghostSlots = roomContent === 'ghost' ? randomGhostSlots() : []
@@ -600,8 +726,18 @@ function pointerDown(x, y) {
   if (pointInRect(x, y, backButton)) {
     gameState = 'home'
     isChangingRoom = false
+    bossActive = false
     dragging = false
     doorAutoMoving = false
+    return
+  }
+
+  if (bossActive) {
+    if (pointInRect(x, y, bossButton)) {
+      bossSealsDone++
+      bossShake = 1
+      if (bossSealsDone >= bossSealsRequired) completeBossBattle()
+    }
     return
   }
 
@@ -687,6 +823,16 @@ canvas.addEventListener('pointercancel', (e) => {
 
 function update() {
   if (gameState !== 'playing') return
+
+  if (bossActive) {
+    bossTimeLeft -= 1 / 60
+    bossShake = Math.max(0, bossShake - 0.08)
+    if (bossTimeLeft <= 0) {
+      bossTimeLeft = 0
+      failBossBattle()
+    }
+    return
+  }
 
   ctx.fillStyle = 'rgba(255,255,255,0.28)'
   ctx.font = '11px sans-serif'
@@ -1588,6 +1734,119 @@ function drawDifficultyMenu() {
   ctx.fillText('开门确认；见鬼后关门封印，多只鬼要贴多张符', W / 2, H * 0.82)
 }
 
+
+function drawBossButton() {
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.018)
+  ctx.fillStyle = '#9f2020'
+  roundRect(bossButton.x, bossButton.y, bossButton.w, bossButton.h, 18)
+  ctx.fill()
+
+  ctx.strokeStyle = `rgba(245,223,155,${0.72 + pulse * 0.22})`
+  ctx.lineWidth = 3
+  roundRect(bossButton.x, bossButton.y, bossButton.w, bossButton.h, 18)
+  ctx.stroke()
+
+  ctx.fillStyle = '#f5df9b'
+  ctx.font = '26px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('疯狂贴封印！', W / 2, bossButton.y + bossButton.h / 2)
+}
+
+function drawBossBattle(frameRect) {
+  const shakePower = bossShake * 8
+  const sx = (Math.random() - 0.5) * shakePower
+  const sy = (Math.random() - 0.5) * shakePower
+
+  ctx.save()
+  ctx.translate(sx, sy)
+
+  drawArtRoom(frameRect, { includeLargeDoor: false, includeContent: false, innerDoorAlpha: 0.8 })
+
+  const open = getOpeningRect(frameRect)
+  const hpRatio = clamp01(1 - bossSealsDone / bossSealsRequired)
+  const panic = hpRatio < 0.3 ? 0.5 + 0.5 * Math.sin(performance.now() * 0.035) : 0.25 + 0.25 * Math.sin(performance.now() * 0.014)
+
+  // 门缝/房间红光
+  const glow = ctx.createRadialGradient(W / 2, open.y + open.h * 0.45, open.w * 0.08, W / 2, open.y + open.h * 0.45, open.w * 0.72)
+  glow.addColorStop(0, `rgba(255,40,25,${0.42 + panic * 0.22})`)
+  glow.addColorStop(0.45, `rgba(120,0,0,${0.22 + panic * 0.18})`)
+  glow.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = glow
+  ctx.fillRect(open.x - open.w * 0.25, open.y - open.h * 0.14, open.w * 1.5, open.h * 1.2)
+
+  // Boss主体：优先复用已有鬼图，否则画一个纯幽灵剪影。
+  const bossImg = ACTIVE_GHOST_SLOTS[0] ? CHARACTER_ASSETS.ghosts[ACTIVE_GHOST_SLOTS[0].id] : null
+  const bossBottom = open.y + open.h * 0.86
+  const bossH = open.h * (0.68 + (1 - hpRatio) * 0.08)
+  const bossW = open.w * 0.72
+
+  ctx.save()
+  ctx.shadowColor = `rgba(255,0,0,${0.8 + panic * 0.2})`
+  ctx.shadowBlur = 28 + panic * 28
+  if (bossImg) {
+    drawImageContainBottom(bossImg, W / 2, bossBottom, bossW, bossH)
+  } else {
+    ctx.fillStyle = '#0a0a0a'
+    roundRect(W / 2 - bossW * 0.28, bossBottom - bossH, bossW * 0.56, bossH, 46)
+    ctx.fill()
+    ctx.fillStyle = '#f1e9d8'
+    ctx.beginPath()
+    ctx.ellipse(W / 2, bossBottom - bossH * 0.64, bossW * 0.16, bossH * 0.18, 0, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+
+  // 已贴封条贴在Boss身上，不显示总数，避免变成纯数字反馈。
+  const shownSeals = Math.min(bossSealsDone, 18)
+  for (let i = 0; i < shownSeals; i++) {
+    const col = i % 6
+    const row = Math.floor(i / 6)
+    const x = W / 2 + (col - 2.5) * 30
+    const y = open.y + open.h * 0.33 + row * 44
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.rotate((col - 2.5) * 0.035)
+    ctx.fillStyle = '#e5c76c'
+    ctx.fillRect(-11, -28, 22, 56)
+    ctx.strokeStyle = '#9f2020'
+    ctx.lineWidth = 1.5
+    ctx.strokeRect(-8, -24, 16, 48)
+    ctx.fillStyle = '#9f2020'
+    ctx.font = '17px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('封', 0, 0)
+    ctx.restore()
+  }
+
+  ctx.restore()
+
+  // 顶部Boss血条和倒计时
+  const barW = Math.min(W * 0.78, 360)
+  const barH = 16
+  const barX = (W - barW) / 2
+  const barY = 112
+  ctx.fillStyle = 'rgba(0,0,0,0.72)'
+  roundRect(barX, barY, barW, barH, 8)
+  ctx.fill()
+  ctx.fillStyle = hpRatio < 0.3 ? `rgba(255,40,25,${0.65 + panic * 0.35})` : '#b42323'
+  roundRect(barX, barY, barW * hpRatio, barH, 8)
+  ctx.fill()
+  ctx.strokeStyle = '#f5df9b'
+  ctx.lineWidth = 2
+  roundRect(barX, barY, barW, barH, 8)
+  ctx.stroke()
+
+  ctx.fillStyle = '#f5df9b'
+  ctx.font = '15px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText(`第 ${bossStage} 大关 Boss｜${bossTimeLeft.toFixed(1)}s`, W / 2, barY - 10)
+
+  drawBossButton()
+}
+
 function drawGameUI() {
   drawBackButton(backButton, '主页')
 
@@ -1650,7 +1909,9 @@ function draw() {
   ctx.fillRect(0, 0, W, H)
 
   const frameRect = getFrameRect()
-  if (enteringRoom) {
+  if (bossActive) {
+    drawBossBattle(frameRect)
+  } else if (enteringRoom) {
     drawEnterTransition(frameRect)
   } else {
     drawArtRoom(frameRect, { includeLargeDoor: true, includeContent: true })
