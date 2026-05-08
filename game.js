@@ -2,20 +2,20 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.8.4
-// 本版修正：空房也可封印；增加多鬼房；多鬼需要多张符；降低门过渡变亮感
+// 版本：v0.8.7
+// 本版新增：主页面 / 游戏规则 / 图鉴系统 / 游戏内返回按钮 / 图鉴收集数量
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.8.5'
-const GAME_VERSION_NOTE = '封印按钮防剧透版'
+const GAME_VERSION = 'v0.8.7'
+const GAME_VERSION_NOTE = '主页面 / 图鉴系统版'
 
 let W = window.innerWidth
 let H = window.innerHeight
 let DPR = window.devicePixelRatio || 1
 
-let gameState = 'menu' // loading / menu / playing / gameover
+let gameState = 'home' // loading / home / difficulty / rules / codex / playing / gameover
 let difficultyMode = null // easy / hard
 let assetsReady = false
 
@@ -71,6 +71,9 @@ const CHARACTER_ASSETS = {
 
 let ACTIVE_GHOST_SLOTS = []
 let ACTIVE_PERSON_SLOTS = []
+
+const CODEX_STORAGE_KEY = 'nextDoorSeenGhostIdsV1'
+let SEEN_GHOST_IDS = new Set()
 
 // 门框原图里“门洞”的位置比例。
 // 这组参数决定：门、墙壁、地板、鬼，都会被放进这个洞口里。
@@ -148,9 +151,15 @@ let ghostEyeUntil = 0
 const sealButton = { x: 0, y: 0, w: 0, h: 58 }
 
 const menuButtons = {
+  start: { x: 0, y: 0, w: 0, h: 68 },
+  rules: { x: 0, y: 0, w: 0, h: 60 },
+  codex: { x: 0, y: 0, w: 0, h: 60 },
   easy: { x: 0, y: 0, w: 0, h: 74 },
   hard: { x: 0, y: 0, w: 0, h: 74 }
 }
+
+const backButton = { x: 14, y: 26, w: 58, h: 34 }
+const screenBackButton = { x: 18, y: 24, w: 72, h: 38 }
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {
@@ -180,6 +189,7 @@ async function loadAssets() {
 
   ACTIVE_GHOST_SLOTS = GHOST_SLOTS.filter((slot) => CHARACTER_ASSETS.ghosts[slot.id])
   ACTIVE_PERSON_SLOTS = PERSON_SLOTS.filter((slot) => CHARACTER_ASSETS.people[slot.id])
+  loadSeenGhosts()
 
   assetsReady = true
 }
@@ -203,6 +213,22 @@ function resizeCanvas() {
 
   const btnW = Math.min(W * 0.76, 340)
   const btnH = 74
+
+  menuButtons.start.x = (W - btnW) / 2
+  menuButtons.start.y = H * 0.44
+  menuButtons.start.w = btnW
+  menuButtons.start.h = 68
+
+  menuButtons.rules.x = (W - btnW) / 2
+  menuButtons.rules.y = H * 0.44 + 86
+  menuButtons.rules.w = btnW
+  menuButtons.rules.h = 60
+
+  menuButtons.codex.x = (W - btnW) / 2
+  menuButtons.codex.y = H * 0.44 + 158
+  menuButtons.codex.w = btnW
+  menuButtons.codex.h = 60
+
   menuButtons.easy.x = (W - btnW) / 2
   menuButtons.easy.y = H * 0.48
   menuButtons.easy.w = btnW
@@ -212,6 +238,16 @@ function resizeCanvas() {
   menuButtons.hard.y = H * 0.48 + btnH + 18
   menuButtons.hard.w = btnW
   menuButtons.hard.h = btnH
+
+  backButton.x = 14
+  backButton.y = Math.max(18, H * 0.025)
+  backButton.w = 58
+  backButton.h = 34
+
+  screenBackButton.x = 18
+  screenBackButton.y = Math.max(18, H * 0.025)
+  screenBackButton.w = 72
+  screenBackButton.h = 38
 }
 
 resizeCanvas()
@@ -232,6 +268,40 @@ function getStoredBest(mode) {
 function saveBest() {
   if (!difficultyMode) return
   localStorage.setItem(DIFFICULTY[difficultyMode].bestKey, String(best))
+}
+
+function loadSeenGhosts() {
+  try {
+    const raw = localStorage.getItem(CODEX_STORAGE_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    SEEN_GHOST_IDS = new Set(arr.map(Number).filter(Boolean))
+  } catch (err) {
+    SEEN_GHOST_IDS = new Set()
+  }
+}
+
+function saveSeenGhosts() {
+  localStorage.setItem(CODEX_STORAGE_KEY, JSON.stringify(Array.from(SEEN_GHOST_IDS).sort((a, b) => a - b)))
+}
+
+function markSeenGhosts(slots) {
+  let changed = false
+  slots.forEach((slot) => {
+    if (!slot || !slot.id) return
+    if (!SEEN_GHOST_IDS.has(slot.id)) {
+      SEEN_GHOST_IDS.add(slot.id)
+      changed = true
+    }
+  })
+  if (changed) saveSeenGhosts()
+}
+
+function collectedGhostCount() {
+  return ACTIVE_GHOST_SLOTS.filter((slot) => SEEN_GHOST_IDS.has(slot.id)).length
+}
+
+function totalGhostCount() {
+  return ACTIVE_GHOST_SLOTS.length || GHOST_SLOTS.length
 }
 
 function startGame(mode) {
@@ -314,12 +384,33 @@ function shuffleArray(arr) {
 }
 
 function pickGhostCount() {
-  const maxCount = Math.min(3, ACTIVE_GHOST_SLOTS.length)
-  if (maxCount <= 1) return maxCount
+  // 多鬼按关卡阶段解锁：
+  // 1-24 关：最多 1 只鬼；
+  // 25-49 关：有概率出现 2 只鬼；
+  // 50 关以后：有概率出现 3 只鬼。
+  const available = ACTIVE_GHOST_SLOTS.length
+  if (available <= 0) return 0
+
+  let stageMax = 1
+  if (room >= 50) stageMax = 3
+  else if (room >= 25) stageMax = 2
+
+  const maxCount = Math.min(stageMax, available)
+  if (maxCount <= 1) return 1
 
   const r = Math.random()
-  if (maxCount >= 3 && r < 0.08) return 3
-  if (maxCount >= 2 && r < 0.28) return 2
+
+  if (maxCount >= 3) {
+    if (r < 0.22) return 3
+    if (r < 0.55) return 2
+    return 1
+  }
+
+  // 25-49 关：开始出现 2 只鬼，但不必每次都是 2 只，避免难度突然跳太猛。
+  if (maxCount >= 2) {
+    return r < 0.38 ? 2 : 1
+  }
+
   return 1
 }
 
@@ -409,16 +500,29 @@ function inSealButton(x, y) {
 function pointerDown(x, y) {
   if (!assetsReady) return
 
-  if (gameState === 'menu') {
-    if (pointInRect(x, y, menuButtons.easy)) startGame('easy')
+  if (gameState === 'home') {
+    if (pointInRect(x, y, menuButtons.start)) gameState = 'difficulty'
+    else if (pointInRect(x, y, menuButtons.rules)) gameState = 'rules'
+    else if (pointInRect(x, y, menuButtons.codex)) gameState = 'codex'
+    return
+  }
+
+  if (gameState === 'difficulty') {
+    if (pointInRect(x, y, screenBackButton)) gameState = 'home'
+    else if (pointInRect(x, y, menuButtons.easy)) startGame('easy')
     else if (pointInRect(x, y, menuButtons.hard)) startGame('hard')
+    return
+  }
+
+  if (gameState === 'rules' || gameState === 'codex') {
+    if (pointInRect(x, y, screenBackButton)) gameState = 'home'
     return
   }
 
   if (gameState === 'gameover') {
     ghostEyeUntil = 0
     if (!difficultyMode) {
-      gameState = 'menu'
+      gameState = 'home'
       return
     }
     room = 1
@@ -430,6 +534,15 @@ function pointerDown(x, y) {
   }
 
   if (gameState !== 'playing') return
+
+  if (pointInRect(x, y, backButton)) {
+    gameState = 'home'
+    isChangingRoom = false
+    dragging = false
+    doorAutoMoving = false
+    return
+  }
+
   if (isChangingRoom) return
 
   doorAutoMoving = false
@@ -539,6 +652,12 @@ function update() {
 
   if (isChangingRoom) return
 
+  // 关门后，鬼的逼近/危险进度回到初始位置。
+  // 这样玩家可以通过“开一点看看 → 关门缓一下 → 再确认”来降低压力。
+  if (roomContent === 'ghost' && doorOpen <= 0.05) {
+    danger = 0
+  }
+
   if (doorAutoMoving && !dragging) {
     const diff = doorTarget - doorOpen
     const step = Math.min(Math.abs(diff), DOOR_AUTO_SPEED)
@@ -556,6 +675,7 @@ function update() {
   if (roomContent === 'ghost' && (doorOpen > 0.08 || ghostEyeActive())) {
     contentVisible = true
     hasSeenContent = true
+    markSeenGhosts(ghostSlots)
   }
 
   if (roomContent === 'fake' && (doorOpen > 0.08 || ghostEyeActive())) {
@@ -1081,6 +1201,44 @@ function drawEnterTransition(baseFrameRect) {
   }
 }
 
+function drawPlainMenuButton(rect, title, subtitle = '', accent = '#d8bd75') {
+  ctx.fillStyle = 'rgba(18,18,18,0.96)'
+  roundRect(rect.x, rect.y, rect.w, rect.h, 16)
+  ctx.fill()
+
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 2
+  roundRect(rect.x, rect.y, rect.w, rect.h, 16)
+  ctx.stroke()
+
+  ctx.fillStyle = '#fff'
+  ctx.font = rect.h >= 66 ? '24px sans-serif' : '21px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(title, rect.x + rect.w / 2, rect.y + rect.h / 2 - (subtitle ? 9 : 0))
+
+  if (subtitle) {
+    ctx.fillStyle = 'rgba(255,255,255,0.58)'
+    ctx.font = '12px sans-serif'
+    ctx.fillText(subtitle, rect.x + rect.w / 2, rect.y + rect.h / 2 + 17)
+  }
+}
+
+function drawBackButton(rect, label = '返回') {
+  ctx.fillStyle = 'rgba(0,0,0,0.58)'
+  roundRect(rect.x, rect.y, rect.w, rect.h, 10)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(245,223,155,0.7)'
+  ctx.lineWidth = 1.5
+  roundRect(rect.x, rect.y, rect.w, rect.h, 10)
+  ctx.stroke()
+  ctx.fillStyle = '#f5df9b'
+  ctx.font = '15px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2)
+}
+
 function drawDifficultyButton(rect, title, desc, bestText, accent) {
   ctx.fillStyle = 'rgba(18,18,18,0.96)'
   roundRect(rect.x, rect.y, rect.w, rect.h, 16)
@@ -1117,7 +1275,147 @@ function drawLoading() {
   ctx.fillText('加载中...', W / 2, H / 2)
 }
 
-function drawStartMenu() {
+
+function drawMenuBackground() {
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, W, H)
+
+  if (assetsReady) {
+    const frameRect = getFrameRect()
+    ctx.save()
+    ctx.globalAlpha = 0.38
+    drawArtRoom(frameRect, { includeLargeDoor: true, includeContent: false })
+    ctx.restore()
+    ctx.fillStyle = 'rgba(0,0,0,0.62)'
+    ctx.fillRect(0, 0, W, H)
+  }
+}
+
+function drawHomeMenu() {
+  drawMenuBackground()
+
+  ctx.fillStyle = '#fff'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.font = '46px sans-serif'
+  ctx.fillText('下一间', W / 2, H * 0.18)
+
+  ctx.fillStyle = 'rgba(245,223,155,0.82)'
+  ctx.font = '13px sans-serif'
+  ctx.fillText(`版本 ${GAME_VERSION}｜${GAME_VERSION_NOTE}`, W / 2, H * 0.18 + 36)
+
+  drawPlainMenuButton(menuButtons.start, '开始游戏', '选择简单 / 困难版本', '#d8bd75')
+  drawPlainMenuButton(menuButtons.rules, '游戏规则', '开门、确认、封印', '#6f8f75')
+  drawPlainMenuButton(menuButtons.codex, '图 鉴', `已收集 ${collectedGhostCount()} / ${totalGhostCount()}`, '#9f2020')
+
+  ctx.fillStyle = 'rgba(255,255,255,0.42)'
+  ctx.font = '13px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('见到新的鬼，就会在图鉴里点亮', W / 2, H * 0.84)
+}
+
+function drawRulesScreen() {
+  drawMenuBackground()
+  drawBackButton(screenBackButton)
+
+  ctx.fillStyle = '#fff'
+  ctx.font = '32px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText('游戏规则', W / 2, H * 0.16)
+
+  const lines = [
+    '1. 慢慢拉开门，观察门后的异常。',
+    '2. 看到鬼：关门后点击「封印」。',
+    '3. 看到人或空房：不要乱封，开到底进入下一间。',
+    '4. 多只鬼需要贴多张符，但按钮不会提示数量。',
+    '5. 关门后鬼会退回原位，可以多次确认。',
+    '6. 见到新鬼后，会自动点亮图鉴。'
+  ]
+
+  const boxX = W * 0.09
+  const boxY = H * 0.24
+  const boxW = W * 0.82
+  const boxH = Math.min(H * 0.56, 360)
+  ctx.fillStyle = 'rgba(18,18,18,0.92)'
+  roundRect(boxX, boxY, boxW, boxH, 18)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(245,223,155,0.45)'
+  ctx.lineWidth = 1.5
+  roundRect(boxX, boxY, boxW, boxH, 18)
+  ctx.stroke()
+
+  ctx.fillStyle = 'rgba(255,255,255,0.84)'
+  ctx.font = '15px sans-serif'
+  ctx.textAlign = 'left'
+  lines.forEach((line, i) => {
+    ctx.fillText(line, boxX + 22, boxY + 42 + i * 42)
+  })
+}
+
+function drawCodexScreen() {
+  drawMenuBackground()
+  drawBackButton(screenBackButton)
+
+  ctx.fillStyle = '#fff'
+  ctx.font = '32px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText('鬼怪图鉴', W / 2, H * 0.14)
+
+  ctx.fillStyle = 'rgba(245,223,155,0.82)'
+  ctx.font = '14px sans-serif'
+  ctx.fillText(`已收集 ${collectedGhostCount()} / ${totalGhostCount()}`, W / 2, H * 0.14 + 30)
+
+  const cols = 3
+  const gap = 12
+  const gridW = Math.min(W * 0.86, 390)
+  const cellW = (gridW - gap * (cols - 1)) / cols
+  const cellH = cellW * 1.18
+  const startX = (W - gridW) / 2
+  const startY = H * 0.23
+
+  GHOST_SLOTS.forEach((slot, i) => {
+    const col = i % cols
+    const row = Math.floor(i / cols)
+    const x = startX + col * (cellW + gap)
+    const y = startY + row * (cellH + gap)
+    const hasAsset = !!CHARACTER_ASSETS.ghosts[slot.id]
+    const seen = SEEN_GHOST_IDS.has(slot.id)
+
+    ctx.fillStyle = seen ? 'rgba(28,24,20,0.95)' : 'rgba(12,12,12,0.92)'
+    roundRect(x, y, cellW, cellH, 14)
+    ctx.fill()
+    ctx.strokeStyle = seen ? 'rgba(245,223,155,0.75)' : 'rgba(255,255,255,0.16)'
+    ctx.lineWidth = 1.5
+    roundRect(x, y, cellW, cellH, 14)
+    ctx.stroke()
+
+    const img = CHARACTER_ASSETS.ghosts[slot.id]
+    if (seen && img) {
+      ctx.save()
+      ctx.globalAlpha = hasAsset ? 1 : 0.3
+      drawImageContain(img, x + 10, y + 8, cellW - 20, cellH - 42)
+      ctx.restore()
+      ctx.fillStyle = '#f5df9b'
+      ctx.font = '13px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText(slot.name, x + cellW / 2, y + cellH - 16)
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'
+      ctx.font = '34px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('?', x + cellW / 2, y + cellH * 0.43)
+      ctx.fillStyle = 'rgba(255,255,255,0.36)'
+      ctx.font = '12px sans-serif'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillText(hasAsset ? '未发现' : '未放图', x + cellW / 2, y + cellH - 16)
+    }
+  })
+}
+
+function drawDifficultyMenu() {
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, W, H)
 
@@ -1135,11 +1433,13 @@ function drawStartMenu() {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
   ctx.font = '42px sans-serif'
-  ctx.fillText('下一间', W / 2, H * 0.2)
+  drawBackButton(screenBackButton)
+
+  ctx.fillText('选择难度', W / 2, H * 0.2)
 
   ctx.fillStyle = 'rgba(255,255,255,0.68)'
   ctx.font = '15px sans-serif'
-  ctx.fillText('选择难度后开始', W / 2, H * 0.2 + 35)
+  ctx.fillText('开始前选择一个版本', W / 2, H * 0.2 + 35)
 
   ctx.fillStyle = 'rgba(245,223,155,0.78)'
   ctx.font = '13px sans-serif'
@@ -1173,8 +1473,23 @@ function draw() {
     return
   }
 
-  if (gameState === 'menu') {
-    drawStartMenu()
+  if (gameState === 'home') {
+    drawHomeMenu()
+    return
+  }
+
+  if (gameState === 'difficulty') {
+    drawDifficultyMenu()
+    return
+  }
+
+  if (gameState === 'rules') {
+    drawRulesScreen()
+    return
+  }
+
+  if (gameState === 'codex') {
+    drawCodexScreen()
     return
   }
 
@@ -1189,6 +1504,13 @@ function draw() {
 
   ctx.font = '14px sans-serif'
   ctx.fillText(`${DIFFICULTY[difficultyMode].name}｜最高纪录：${best}`, W / 2, 73)
+
+  drawBackButton(backButton, '主页')
+
+  ctx.fillStyle = 'rgba(245,223,155,0.88)'
+  ctx.font = '13px sans-serif'
+  ctx.textAlign = 'right'
+  ctx.fillText(`图鉴 ${collectedGhostCount()} / ${totalGhostCount()}`, W - 14, 34)
 
   const frameRect = getFrameRect()
   if (enteringRoom) {
