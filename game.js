@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.9.3
-// 本版更新：修复第25关/强制Boss战黑屏；Boss房间出现时不会被新房间黑场遮住
+// 版本：v0.9.5
+// 本版更新：Boss战符咒直接贴在门板上，并绑定门板坐标跟随门移动
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.9.3'
-const GAME_VERSION_NOTE = 'Boss开门修复版'
+const GAME_VERSION = 'v0.9.5'
+const GAME_VERSION_NOTE = 'Boss门板贴符版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -175,6 +175,7 @@ let bossPhase = 'idle' // idle / reveal / sealing
 let bossSeen = false
 let bossDoorPressure = 0
 let bossSealFlash = 0
+let bossSealStickers = []
 
 const BOSS_CONFIRM_OPEN = 0.32
 const BOSS_START_SEAL_OPEN = 0.06
@@ -537,6 +538,7 @@ function getBossSealPushBack() {
 function completeBossBattle() {
   bossActive = false
   bossPhase = 'idle'
+  bossSealStickers = []
   bossDefeatedStage = Math.max(bossDefeatedStage, bossStage)
   room = getBossStageEnd(bossStage) + 1
   if (room > best) {
@@ -554,6 +556,7 @@ function failBossBattle() {
   const stageEnd = getBossStageEnd(bossStage)
   bossActive = false
   bossPhase = 'idle'
+  bossSealStickers = []
   if (bossForced || room >= stageEnd) {
     gameOver()
     return
@@ -785,6 +788,7 @@ function pointerDown(x, y) {
   if (bossActive) {
     if (bossPhase === 'sealing') {
       if (pointInRect(x, y, bossButton)) {
+        spawnBossSealEffect()
         bossSealsDone++
         bossShake = 1
         bossSealFlash = 1
@@ -917,6 +921,7 @@ function update() {
   if (bossActive) {
     bossShake = Math.max(0, bossShake - 0.08)
     bossSealFlash = Math.max(0, bossSealFlash - 0.1)
+    updateBossSealEffects()
 
     if (doorAutoMoving && !dragging) {
       const diff = doorTarget - doorOpen
@@ -1872,6 +1877,68 @@ function drawDifficultyMenu() {
 }
 
 
+function bossSealPosition(index, total) {
+  const col = index % 5
+  const row = Math.floor(index / 5)
+  const rowOffset = row % 2 === 0 ? 0 : 0.06
+  return {
+    fx: 0.30 + col * 0.10 + rowOffset + (Math.random() - 0.5) * 0.035,
+    fy: 0.25 + row * 0.082 + (Math.random() - 0.5) * 0.025,
+    rot: (Math.random() - 0.5) * 0.34,
+    scale: 0.82 + Math.random() * 0.32
+  }
+}
+
+function spawnBossSealEffect() {
+  const pos = bossSealPosition(bossSealsDone, bossSealsRequired)
+  const sticker = {
+    fx: clamp01(pos.fx),
+    fy: clamp01(pos.fy),
+    rot: pos.rot,
+    scale: pos.scale,
+    birth: performance.now()
+  }
+  bossSealStickers.push(sticker)
+  if (bossSealStickers.length > 36) bossSealStickers.shift()
+
+}
+
+function updateBossSealEffects() {
+  // v0.9.5：Boss符咒不再飞行，直接贴在门板局部坐标上。
+}
+
+function drawBossTalisman(x, y, scale = 1, rot = 0, alpha = 1) {
+  const w = 30 * scale
+  const h = 72 * scale
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.translate(x, y)
+  ctx.rotate(rot)
+  ctx.fillStyle = '#e5c76c'
+  ctx.fillRect(-w / 2, -h / 2, w, h)
+  ctx.strokeStyle = '#9f2020'
+  ctx.lineWidth = Math.max(1, 2 * scale)
+  ctx.strokeRect(-w / 2 + 4 * scale, -h / 2 + 5 * scale, w - 8 * scale, h - 10 * scale)
+  ctx.fillStyle = '#9f2020'
+  ctx.font = `${Math.floor(22 * scale)}px sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('封', 0, 0)
+  ctx.restore()
+}
+
+function drawBossSealStickersOnDoor(doorRect) {
+  // 符咒绑定在“门板局部坐标”上，而不是屏幕坐标。
+  // Boss把门顶开/玩家把门压回去时，doorRect.x 会变化，符咒会跟着门一起动。
+  bossSealStickers.forEach((seal) => {
+    const age = Math.min(1, (performance.now() - (seal.birth || 0)) / 160)
+    const pop = 1 + 0.18 * Math.sin(age * Math.PI)
+    const x = doorRect.x + doorRect.w * seal.fx
+    const y = doorRect.y + doorRect.h * seal.fy
+    drawBossTalisman(x, y, seal.scale * pop, seal.rot, 0.98)
+  })
+}
+
 function drawBossButton() {
   const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.018)
   ctx.fillStyle = '#9f2020'
@@ -1941,28 +2008,7 @@ function drawBossBattle(frameRect) {
     }
     ctx.restore()
 
-    // 已贴封条贴在Boss/门缝附近，数量不写出来，避免变成数字剧透。
-    const shownSeals = Math.min(bossSealsDone, 18)
-    for (let i = 0; i < shownSeals; i++) {
-      const col = i % 6
-      const row = Math.floor(i / 6)
-      const x = W / 2 + (col - 2.5) * 30
-      const y = open.y + open.h * 0.30 + row * 44
-      ctx.save()
-      ctx.translate(x, y)
-      ctx.rotate((col - 2.5) * 0.035)
-      ctx.fillStyle = '#e5c76c'
-      ctx.fillRect(-11, -28, 22, 56)
-      ctx.strokeStyle = '#9f2020'
-      ctx.lineWidth = 1.5
-      ctx.strokeRect(-8, -24, 16, 48)
-      ctx.fillStyle = '#9f2020'
-      ctx.font = '17px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('封', 0, 0)
-      ctx.restore()
-    }
+    // v0.9.5：符咒不再贴在Boss身上；统一贴在前景门板上。
   })
 
   // 门框和前景门最后画：Boss封印阶段会把门硬顶开；每贴一次会压回去。
@@ -1971,6 +2017,10 @@ function drawBossBattle(frameRect) {
   const doorX = open.x - slide
   const doorAlpha = ghostEyeActive() ? 0.6 : 1
   drawImageCoverAlpha(ASSETS.door, doorX, open.y, open.w, open.h, doorAlpha)
+
+  if (bossPhase === 'sealing') {
+    drawBossSealStickersOnDoor({ x: doorX, y: open.y, w: open.w, h: open.h })
+  }
 
   // 门缝红光必须在门上方再补一层，让“压不住”的感觉更明显。
   if (doorOpen > 0.02) {
@@ -1984,6 +2034,7 @@ function drawBossBattle(frameRect) {
     ctx.fillStyle = g
     ctx.fillRect(crackX - crackW, open.y + open.h * 0.05, crackW * 3, open.h * 0.9)
   }
+
 
   ctx.restore()
 
