@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.21';
+  const VERSION = 'v0.11.22';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -1308,39 +1308,49 @@
   function drawTransitionScene() {
     const l = state.layout;
     const t = easeInOut(clamp(state.transition, 0, 1));
-    const bigHole = rectLerp(l.smallHole, l.bigHole, t);
-    const bigDoor = rectLerp(l.smallDoor, l.bigDoor, t);
-    const smallScale = 0.36;
-    const innerDoor = {
-      w: bigDoor.w * smallScale,
-      h: bigDoor.h * smallScale,
-      x: bigDoor.x + (bigDoor.w - bigDoor.w * smallScale) * 0.5,
-      y: bigDoor.y + bigDoor.h * 0.39
-    };
-    const innerHole = { ...innerDoor };
-    const innerWall = {
-      x: innerHole.x - innerHole.w * 0.64,
-      y: innerHole.y - innerHole.h * 0.56,
-      w: innerHole.w * 2.28,
-      h: innerHole.h * 1.56
-    };
+
+    // 进入下一间的正确逻辑：不是把大门插值成小门，也不是让画面先缩小；
+    // 而是把“当前整套空间”以小门为锚点同步推进放大。
+    // 这样外层墙/门会一起变大并离开视野，内层墙/门会同步放大到大门位置。
+    const targetScale = l.bigDoor.w / l.smallDoor.w;
+    const s = lerp(1, targetScale, t);
+    const tx = lerp(0, l.bigDoor.x - l.smallDoor.x * targetScale, t);
+    const ty = lerp(0, l.bigDoor.y - l.smallDoor.y * targetScale, t);
+
+    function tr(r) {
+      return {
+        x: r.x * s + tx,
+        y: r.y * s + ty,
+        w: r.w * s,
+        h: r.h * s
+      };
+    }
+
+    const frontHole = tr(l.bigHole);
+    const frontDoor = tr(l.bigDoor);
+    const innerWall = tr(l.smallWall);
+    const innerHole = tr(l.smallHole);
+    const innerDoor = tr(l.smallDoor);
 
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, l.topH, l.w, l.h - l.topH);
     ctx.clip();
-    drawSceneGround(bigHole, innerWall, clamp(1 - t * 0.4, 0.7, 1));
-    drawSmallWallAndDoor(innerWall, innerHole, innerDoor, clamp(0.82 + (1 - t) * 0.15, 0.78, 1));
-    drawInteriorPerspective(bigHole, innerWall);
+
+    drawSceneGround(frontHole, innerWall, 1);
+    drawSmallWallAndDoor(innerWall, innerHole, innerDoor, 1);
+    drawInteriorPerspective(frontHole, innerWall);
+
     if (state.transitionFadeContent) {
       ctx.save();
-      ctx.globalAlpha = clamp(1 - t * 1.45, 0, 1);
-      drawContentBehindDoor(bigDoor, bigHole);
+      ctx.globalAlpha = clamp(1 - t * 1.35, 0, 1);
+      drawContentBehindDoor(frontDoor, frontHole);
       ctx.restore();
     }
-    drawBigWall(bigHole);
-    drawDoorPanel(bigDoor, state.transitionDoor, { big: true });
-    drawDoorBaseLine(bigDoor, state.transitionDoor, 1);
+
+    drawBigWall(frontHole);
+    drawDoorPanel(frontDoor, state.transitionDoor, { big: true });
+    drawDoorBaseLine(frontDoor, state.transitionDoor, 1);
     ctx.restore();
   }
 
