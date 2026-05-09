@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.22';
+  const VERSION = 'v0.11.23';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -1337,7 +1337,8 @@
     ctx.rect(0, l.topH, l.w, l.h - l.topH);
     ctx.clip();
 
-    drawSceneGround(frontHole, innerWall, 1);
+    // 地板不参与放大消失：先画一层稳定地面，转场中一直保留。
+    drawSceneGround(l.bigHole, l.smallWall, 1);
     drawSmallWallAndDoor(innerWall, innerHole, innerDoor, 1);
     drawInteriorPerspective(frontHole, innerWall);
 
@@ -1351,6 +1352,8 @@
     drawBigWall(frontHole);
     drawDoorPanel(frontDoor, state.transitionDoor, { big: true });
     drawDoorBaseLine(frontDoor, state.transitionDoor, 1);
+    // 再补一条稳定的最终地板线，避免转场末端地面跟着放大消失。
+    drawDoorBaseLine(l.bigDoor, 0, 1);
     ctx.restore();
   }
 
