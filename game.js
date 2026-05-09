@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.19';
+  const VERSION = 'v0.11.20';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -354,18 +354,27 @@
 
   function prepareRoomLoadingForContent(content) {
     const files = uniqueFiles([...contentPreloadFiles(content), ...stagePreloadFiles(state.room).slice(0, 8)]);
+    preloadFiles(files);
+
     const stageIndex = ((state.room - 1) % 25) + 1;
     const isNewStage = stageIndex === 1 && state.room > 1;
+
+    // 普通房间不再挡住流程，不再显示每关加载条；素材在后台加载。
+    // 只有每25间进入新大关时，显示一次短提示，顺便给下一批素材一点加载时间。
+    if (!isNewStage) {
+      state.roomLoading = null;
+      return;
+    }
+
     state.roomLoading = {
       active: true,
       files,
       elapsed: 0,
-      min: isNewStage ? 0.95 : 0.28,
-      max: isNewStage ? 1.8 : 1.05,
-      title: isNewStage ? '新的门境开启……' : '门后有动静……',
-      titleEn: isNewStage ? 'A new threshold opens...' : 'Something moves behind the door...'
+      min: 0.85,
+      max: 1.35,
+      title: '新的门境开启……',
+      titleEn: 'A new threshold opens...'
     };
-    preloadFiles(files);
   }
 
   function roomIsLoading() {
@@ -376,8 +385,7 @@
     if (!roomIsLoading()) return;
     const r = state.roomLoading;
     r.elapsed += dt;
-    const prog = assetLoadProgress(r.files).loaded;
-    if (r.elapsed >= r.min && (prog >= 1 || r.elapsed >= r.max)) {
+    if (r.elapsed >= r.min) {
       r.active = false;
     }
   }
@@ -1968,12 +1976,10 @@
     const l = state.layout;
     const r = state.roomLoading;
     if (!r) return;
-    const prog = assetLoadProgress(r.files);
-    const ratio = clamp(Math.max(prog.loaded * 0.88, r.elapsed / Math.max(0.1, r.min) * 0.28), 0, 1);
     ctx.save();
     ctx.globalAlpha = 0.94;
     const w = Math.min(l.w * 0.78, 310);
-    const h = 78;
+    const h = 58;
     const x = (l.w - w) / 2;
     const y = l.topH + l.gameH * 0.34;
     ctx.fillStyle = '#fffdf6';
@@ -1984,8 +1990,7 @@
     ctx.font = '900 16px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(ui(r.title, r.titleEn), l.w / 2, y + 26);
-    drawProgressBar(x + 34, y + 48, w - 68, 10, ratio);
+    ctx.fillText(ui(r.title, r.titleEn), l.w / 2, y + h / 2);
     ctx.restore();
   }
 
