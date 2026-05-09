@@ -1,2423 +1,1540 @@
-// game.js - 《下一间》网页 Canvas 版 / 图片图层替换版
-// 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
-// 新增：assets 目录图片图层结构，可直接替换 png
-// 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.9.6
-// 本版更新：同步调用根目录新素材；旧 根目录新素材 路径全部停用
-
-const canvas = document.getElementById('game')
-const ctx = canvas.getContext('2d')
-
-const GAME_VERSION = 'v0.10.5'
-const GAME_VERSION_NOTE = '无限空间层级重构版'
-
-let W = window.innerWidth
-let H = window.innerHeight
-let DPR = window.devicePixelRatio || 1
-
-let gameState = 'home' // loading / home / difficulty / rules / codex / playing / gameover
-let difficultyMode = null // easy / hard
-let assetsReady = false
-
-const DIFFICULTY = {
-  easy: {
-    name: '简单版',
-    desc: '瘦子鬼降速，适合先上手',
-    thinMultiplier: 1.25,
-    bestKey: 'bestRoomV7Easy'
-  },
-  hard: {
-    name: '困难版',
-    desc: '原版速度，更紧张',
-    thinMultiplier: 1.8,
-    bestKey: 'bestRoomV7Hard'
-  }
-}
-
-// ===== 图片资源 =====
-// v0.9.6：改为直接调用你上传在仓库根目录的素材，不再调用 根目录新素材 里的旧素材。
-const ASSET_PATHS = {
-  // v0.10.2：不再调用门、门框、房间内素材。
-  // 现在只保留可替换的按钮/符咒素材；门、墙、房间、小门全部由代码生成。
-  sealButton: '封印按钮.png'
-}
-
-// ===== 角色资源槽位
-// ===== 角色资源槽位 =====
-// v0.9.6：根据你当前上传的根目录图片建立映射。
-// 鬼图鉴按首批山海经阵容排序；缺图不会报错，缺图槽位不会参与随机。
-const GHOST_SLOTS = [
-  { id: 1, name: '猼訑', src: '猼訑.png' },
-  { id: 2, name: '赤鱬', src: '赤鱬.png' },
-  { id: 3, name: '当康', src: '当康.png' },
-  { id: 4, name: '混沌', src: '混沌.png' },
-  { id: 5, name: '九尾狐', src: '九尾狐.png' },
-  { id: 6, name: '夔牛', src: '夔牛.png' },
-  { id: 7, name: '麒麟', src: '麒麟.png' },
-  { id: 8, name: '穷奇', src: '穷奇.png' },
-  { id: 9, name: '饕餮', src: '饕餮.png' },
-  { id: 10, name: '狰', src: '狰.png' },
-  { id: 11, name: '烛阴', src: '烛阴.png' }
-]
-
-// 人物素材使用你上传的 1号人物.png ～ 10号人物.png。
-const PERSON_SLOTS = Array.from({ length: 10 }, (_, i) => ({
-  id: i + 1,
-  name: `${i + 1}号人物`,
-  src: `${i + 1}号人物.png`
-}))
-
-const ASSETS = {}
-const CHARACTER_ASSETS = {
-  ghosts: {},
-  people: {}
-}
-
-let ACTIVE_GHOST_SLOTS = []
-let ACTIVE_PERSON_SLOTS = []
-
-const CODEX_STORAGE_KEY = 'nextDoorSeenGhostIdsV1'
-const PEOPLE_CODEX_STORAGE_KEY = 'nextDoorSeenPeopleIdsV1'
-let SEEN_GHOST_IDS = new Set()
-let SEEN_PERSON_IDS = new Set()
-let codexTab = 'ghosts' // ghosts / people
-
-// ===== 代码生成空间尺寸规范 =====
-// v0.10.2：门、门框、房间、大门墙、小门墙全部由代码生成。
-// 后续你按这些比例制作素材，就可以精准替换，不再盲猜图片尺寸。
-const FRAME_SOURCE = { w: 720, h: 1120 }
-const FRAME_ASPECT = FRAME_SOURCE.w / FRAME_SOURCE.h
-
-// 外层门洞在整张“门墙”中的比例。
-// 这就是未来你做门框/墙面素材时最重要的裁切标准。
-const FRAME_OPENING = {
-  // v0.10.5：门洞改窄、改高，更接近手机竖屏里的“门”，避免变成横宽的大方块。
-  x: 0.220,
-  y: 0.170,
-  w: 0.560,
-  h: 0.650
-}
-
-const ART_LAYOUT = {
-  // v0.10.5：整体门墙更大、更靠上，黑边减少，但仍给顶部 UI 和底部封印按钮留空间。
-  frameTop: 0.185,
-  frameHeight: 0.635,
-  maxFrameWidth: 0.90,
-  largeDoorSlide: 0.96,
-
-  // 小墙面 / 小门在透视空间里更深、更小，放大时才有真正靠近感。
-  innerFrameHeight: 0.255,
-  innerFrameY: 0.235,
-  innerDoorInset: 0.12,
-  roomWallDarkness: 0,
-  innerDoorAlpha: 1,
-  innerDoorDarkness: 0.36,
-
-  // 门板不要顶满门洞，保留门框上下边。
-  doorVisualTop: 0.030,
-  doorVisualScaleY: 0.935,
-
-  characterBottom: 0.910,
-  characterMaxW: 0.28,
-  ghostHeight: 0.34,
-  personHeight: 0.37,
-  transitionClipPadding: 0
-}
-
-const SHOW_WALL_AND_FLOOR = true
-
-let room = 1
-let best = 1
-
-let dragging = false
-let startX = 0
-let startDoorOpen = 0
-
-let doorOpen = 0
-let doorTarget = 0
-let doorAutoMoving = false
-const DOOR_SNAP_THRESHOLD = 0.45
-const DOOR_AUTO_SPEED = 0.018
-
-let roomContent = 'empty' // ghost / fake / empty
-let ghostType = 'normal' // big / thin / normal
-let ghostSlot = null     // 兼容旧逻辑：当前第一只鬼
-let ghostSlots = []      // 当前房间所有鬼；可能 1~3 只
-let personSlot = null    // 当前抽到几号人物
-
-let contentVisible = false
-let hasSeenContent = false
-
-let danger = 0
-let dangerSpeed = 0.02
-let ghostThreshold = 0.35
-
-let isChangingRoom = false
-let sealAnim = 1
-let sealSuccess = false
-let sealCountRequired = 0
-let sealCountDone = 0
-let sealEyeTriggered = false
-let sealResolveStart = 0
-const SEAL_RESOLVE_DURATION = 520
-
-let enterAnim = 0
-let enteringRoom = false
-let roomFadeIn = 0 // 新房间出现时的黑场淡入，避免切房间突兀
-
-const ENTER_ANIM_SPEED = 0.011
-const ROOM_FADE_IN_SPEED = 0.06
-
-const GHOST_EYE_DURATION_MS = 10000
-let ghostEyeUntil = 0
-
-const BOSS_CONFIGS = [
-  { stage: 1, time: 7.0, seals: 16 },
-  { stage: 2, time: 6.5, seals: 20 },
-  { stage: 3, time: 6.0, seals: 24 },
-  { stage: 4, time: 5.8, seals: 28 },
-  { stage: 5, time: 5.5, seals: 30 }
-]
-
-let bossActive = false
-let bossStage = 1
-let bossTimeLeft = 0
-let bossTimeTotal = 7
-let bossSealsRequired = 16
-let bossSealsDone = 0
-let bossScheduledStage = 0
-let bossScheduledRoom = 0
-let bossAttemptedStage = 0
-let bossDefeatedStage = 0
-let bossShake = 0
-let bossForced = false
-let bossPhase = 'idle' // idle / reveal / sealing
-let bossSeen = false
-let bossDoorPressure = 0
-let bossSealFlash = 0
-let bossSealStickers = []
-
-const BOSS_CONFIRM_OPEN = 0.32
-const BOSS_START_SEAL_OPEN = 0.06
-const BOSS_BASE_PRESSURE = 0.13
-
-const sealButton = { x: 0, y: 0, w: 0, h: 58 }
-const bossButton = { x: 0, y: 0, w: 0, h: 76 }
-
-const menuButtons = {
-  start: { x: 0, y: 0, w: 0, h: 68 },
-  rules: { x: 0, y: 0, w: 0, h: 60 },
-  codex: { x: 0, y: 0, w: 0, h: 60 },
-  easy: { x: 0, y: 0, w: 0, h: 74 },
-  hard: { x: 0, y: 0, w: 0, h: 74 }
-}
-
-const backButton = { x: 14, y: 26, w: 58, h: 34 }
-const screenBackButton = { x: 18, y: 24, w: 72, h: 38 }
-const codexTabs = {
-  ghosts: { x: 0, y: 0, w: 0, h: 38 },
-  people: { x: 0, y: 0, w: 0, h: 38 }
-}
-
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = reject
-    img.src = src
-  })
-}
-
-function loadOptionalImage(src) {
-  return loadImage(src).catch(() => null)
-}
-
-async function loadAssets() {
-  // 基础空间图层是必需资源，加载失败需要报错。
-  const entries = Object.entries(ASSET_PATHS)
-  const loaded = await Promise.all(entries.map(async ([key, src]) => [key, await loadImage(src)]))
-  loaded.forEach(([key, img]) => { ASSETS[key] = img })
-
-  // 鬼和人物是可选资源，方便你后续慢慢补图。
-  const ghostImgs = await Promise.all(GHOST_SLOTS.map(async (slot) => [slot.id, await loadOptionalImage(slot.src)]))
-  const personImgs = await Promise.all(PERSON_SLOTS.map(async (slot) => [slot.id, await loadOptionalImage(slot.src)]))
-
-  ghostImgs.forEach(([id, img]) => { CHARACTER_ASSETS.ghosts[id] = img })
-  personImgs.forEach(([id, img]) => { CHARACTER_ASSETS.people[id] = img })
-
-  ACTIVE_GHOST_SLOTS = GHOST_SLOTS.filter((slot) => CHARACTER_ASSETS.ghosts[slot.id])
-  ACTIVE_PERSON_SLOTS = PERSON_SLOTS.filter((slot) => CHARACTER_ASSETS.people[slot.id])
-  loadSeenGhosts()
-
-  assetsReady = true
-}
-
-function resizeCanvas() {
-  W = window.innerWidth
-  H = window.innerHeight
-  DPR = window.devicePixelRatio || 1
-
-  canvas.width = Math.floor(W * DPR)
-  canvas.height = Math.floor(H * DPR)
-  canvas.style.width = `${W}px`
-  canvas.style.height = `${H}px`
-
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
-
-  sealButton.x = W * 0.3
-  sealButton.y = H * 0.85
-  sealButton.w = W * 0.4
-  sealButton.h = 58
-
-  const btnW = Math.min(W * 0.76, 340)
-  const btnH = 74
-
-  menuButtons.start.x = (W - btnW) / 2
-  menuButtons.start.y = H * 0.44
-  menuButtons.start.w = btnW
-  menuButtons.start.h = 68
-
-  menuButtons.rules.x = (W - btnW) / 2
-  menuButtons.rules.y = H * 0.44 + 86
-  menuButtons.rules.w = btnW
-  menuButtons.rules.h = 60
-
-  menuButtons.codex.x = (W - btnW) / 2
-  menuButtons.codex.y = H * 0.44 + 158
-  menuButtons.codex.w = btnW
-  menuButtons.codex.h = 60
-
-  menuButtons.easy.x = (W - btnW) / 2
-  menuButtons.easy.y = H * 0.48
-  menuButtons.easy.w = btnW
-  menuButtons.easy.h = btnH
-
-  menuButtons.hard.x = (W - btnW) / 2
-  menuButtons.hard.y = H * 0.48 + btnH + 18
-  menuButtons.hard.w = btnW
-  menuButtons.hard.h = btnH
-
-  backButton.x = 14
-  backButton.y = Math.max(18, H * 0.025)
-  backButton.w = 58
-  backButton.h = 34
-
-  screenBackButton.x = 18
-  screenBackButton.y = Math.max(18, H * 0.025)
-  screenBackButton.w = 72
-  screenBackButton.h = 38
-
-  bossButton.w = Math.min(W * 0.78, 360)
-  bossButton.h = 78
-  bossButton.x = (W - bossButton.w) / 2
-  bossButton.y = H - bossButton.h - Math.max(26, H * 0.035)
-
-  const tabW = Math.min(W * 0.34, 150)
-  const tabGap = 12
-  const tabsTotal = tabW * 2 + tabGap
-  codexTabs.ghosts.x = (W - tabsTotal) / 2
-  codexTabs.ghosts.y = H * 0.19
-  codexTabs.ghosts.w = tabW
-  codexTabs.ghosts.h = 38
-  codexTabs.people.x = codexTabs.ghosts.x + tabW + tabGap
-  codexTabs.people.y = codexTabs.ghosts.y
-  codexTabs.people.w = tabW
-  codexTabs.people.h = 38
-}
-
-resizeCanvas()
-window.addEventListener('resize', resizeCanvas)
-window.addEventListener('orientationchange', resizeCanvas)
-
-function getStoredBest(mode) {
-  if (mode === 'hard') {
-    return Number(
-      localStorage.getItem(DIFFICULTY.hard.bestKey) ||
-      localStorage.getItem('bestRoomV7') ||
-      1
-    )
-  }
-  return Number(localStorage.getItem(DIFFICULTY.easy.bestKey) || 1)
-}
-
-function saveBest() {
-  if (!difficultyMode) return
-  localStorage.setItem(DIFFICULTY[difficultyMode].bestKey, String(best))
-}
-
-function loadSeenGhosts() {
-  try {
-    const raw = localStorage.getItem(CODEX_STORAGE_KEY)
-    const arr = raw ? JSON.parse(raw) : []
-    SEEN_GHOST_IDS = new Set(arr.map(Number).filter(Boolean))
-  } catch (err) {
-    SEEN_GHOST_IDS = new Set()
-  }
-
-  try {
-    const rawPeople = localStorage.getItem(PEOPLE_CODEX_STORAGE_KEY)
-    const arrPeople = rawPeople ? JSON.parse(rawPeople) : []
-    SEEN_PERSON_IDS = new Set(arrPeople.map(Number).filter(Boolean))
-  } catch (err) {
-    SEEN_PERSON_IDS = new Set()
-  }
-}
-
-function saveSeenGhosts() {
-  localStorage.setItem(CODEX_STORAGE_KEY, JSON.stringify(Array.from(SEEN_GHOST_IDS).sort((a, b) => a - b)))
-}
-
-function saveSeenPeople() {
-  localStorage.setItem(PEOPLE_CODEX_STORAGE_KEY, JSON.stringify(Array.from(SEEN_PERSON_IDS).sort((a, b) => a - b)))
-}
-
-function markSeenGhosts(slots) {
-  let changed = false
-  slots.forEach((slot) => {
-    if (!slot || !slot.id) return
-    if (!SEEN_GHOST_IDS.has(slot.id)) {
-      SEEN_GHOST_IDS.add(slot.id)
-      changed = true
-    }
-  })
-  if (changed) saveSeenGhosts()
-}
-
-function markSeenPerson(slot) {
-  if (!slot || !slot.id) return
-  if (!SEEN_PERSON_IDS.has(slot.id)) {
-    SEEN_PERSON_IDS.add(slot.id)
-    saveSeenPeople()
-  }
-}
-
-function collectedGhostCount() {
-  return ACTIVE_GHOST_SLOTS.filter((slot) => SEEN_GHOST_IDS.has(slot.id)).length
-}
-
-function totalGhostCount() {
-  return ACTIVE_GHOST_SLOTS.length || GHOST_SLOTS.length
-}
-
-function collectedPeopleCount() {
-  return ACTIVE_PERSON_SLOTS.filter((slot) => SEEN_PERSON_IDS.has(slot.id)).length
-}
-
-function totalPeopleCount() {
-  return ACTIVE_PERSON_SLOTS.length || PERSON_SLOTS.length
-}
-
-function collectedTotalCount() {
-  return collectedGhostCount() + collectedPeopleCount()
-}
-
-function totalCodexCount() {
-  return totalGhostCount() + totalPeopleCount()
-}
-
-function startGame(mode) {
-  ghostEyeUntil = 0
-  difficultyMode = mode
-  room = 1
-  best = getStoredBest(mode)
-  bossActive = false
-  bossPhase = 'idle'
-  bossSeen = false
-  bossDoorPressure = 0
-  bossSealFlash = 0
-  bossScheduledStage = 0
-  bossScheduledRoom = 0
-  bossAttemptedStage = 0
-  bossDefeatedStage = 0
-  gameState = 'playing'
-  roomFadeIn = 0
-  newRoom()
-}
-
-function pointInRect(x, y, rect) {
-  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
-}
-
-function clamp01(v) {
-  return Math.max(0, Math.min(1, v))
-}
-
-function smoothstep(v) {
-  v = clamp01(v)
-  return v * v * (3 - 2 * v)
-}
-
-function easeInOutCubic(v) {
-  v = clamp01(v)
-  return v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2
-}
-
-function ghostEyeActive() {
-  return performance.now() < ghostEyeUntil
-}
-
-function ghostEyeLeftSeconds() {
-  return Math.max(0, (ghostEyeUntil - performance.now()) / 1000)
-}
-
-function activateGhostEye() {
-  ghostEyeUntil = performance.now() + GHOST_EYE_DURATION_MS
-}
-
-function getBossStageForRoom(value = room) {
-  return Math.floor((value - 1) / 25) + 1
-}
-
-function getBossStageStart(stage) {
-  return (stage - 1) * 25 + 1
-}
-
-function getBossStageEnd(stage) {
-  return stage * 25
-}
-
-function getBossConfig(stage) {
-  return BOSS_CONFIGS[Math.min(stage, BOSS_CONFIGS.length) - 1] || BOSS_CONFIGS[BOSS_CONFIGS.length - 1]
-}
-
-function ensureBossScheduleForStage(stage) {
-  if (bossScheduledStage === stage && bossScheduledRoom) return
-  bossScheduledStage = stage
-  bossAttemptedStage = 0
-  bossDefeatedStage = Math.max(bossDefeatedStage, stage - 1)
-  const minRoom = getBossStageStart(stage) + 19
-  const maxRoom = getBossStageEnd(stage)
-  bossScheduledRoom = minRoom + Math.floor(Math.random() * (maxRoom - minRoom + 1))
-}
-
-function shouldStartBossRoom() {
-  const stage = getBossStageForRoom(room)
-  ensureBossScheduleForStage(stage)
-  if (bossDefeatedStage >= stage) return false
-  const stageEnd = getBossStageEnd(stage)
-  if (room >= stageEnd) return true
-  if (bossAttemptedStage === stage) return false
-  return room >= bossScheduledRoom
-}
-
-function startBossBattle(forced = false) {
-  // Boss房间不能吃到上一间切房时留下的黑场。
-  // 之前第25关强制Boss时，newRoom() 会先进入 bossActive，update() 又在Boss分支提前 return，
-  // 导致 roomFadeIn 没机会衰减，于是画面一直黑屏。
-  roomFadeIn = 0
-  enteringRoom = false
-  isChangingRoom = false
-
-  bossActive = true
-  bossPhase = 'reveal'
-  bossSeen = false
-  bossStage = getBossStageForRoom(room)
-  const config = getBossConfig(bossStage)
-  bossTimeTotal = config.time
-  bossTimeLeft = config.time
-  bossSealsRequired = config.seals
-  bossSealsDone = 0
-  bossForced = forced
-  bossAttemptedStage = bossStage
-  bossShake = 0
-  bossDoorPressure = 0
-  bossSealFlash = 0
-
-  dragging = false
-  doorAutoMoving = false
-  doorOpen = 0
-  doorTarget = 0
-  roomContent = 'boss'
-  hasSeenContent = false
-  contentVisible = false
-}
-
-function beginBossSealing() {
-  bossPhase = 'sealing'
-  bossTimeLeft = bossTimeTotal
-  bossDoorPressure = BOSS_BASE_PRESSURE
-  doorOpen = bossDoorPressure
-  doorTarget = 0
-  doorAutoMoving = false
-  dragging = false
-}
-
-function getBossPressureSpeed() {
-  // 不点封印时，Boss 会在几秒内把门顶开；越后期压迫越明显。
-  const stageBoost = Math.min(0.055, (bossStage - 1) * 0.012)
-  const hpRatio = 1 - bossSealsDone / Math.max(1, bossSealsRequired)
-  const lowHpSlowdown = hpRatio < 0.3 ? -0.025 : 0
-  return 0.19 + stageBoost + lowHpSlowdown
-}
-
-function getBossSealPushBack() {
-  // 每贴一次符，把门缝压回去一点；不直接归零，保留拉扯感。
-  return 0.058
-}
-
-function completeBossBattle() {
-  bossActive = false
-  bossPhase = 'idle'
-  bossSealStickers = []
-  bossDefeatedStage = Math.max(bossDefeatedStage, bossStage)
-  room = getBossStageEnd(bossStage) + 1
-  if (room > best) {
-    best = room
-    saveBest()
-  }
-  bossScheduledStage = 0
-  bossScheduledRoom = 0
-  bossAttemptedStage = 0
-  roomFadeIn = 0.55
-  newRoom()
-}
-
-function failBossBattle() {
-  const stageEnd = getBossStageEnd(bossStage)
-  bossActive = false
-  bossPhase = 'idle'
-  bossSealStickers = []
-  if (bossForced || room >= stageEnd) {
-    gameOver()
-    return
-  }
-  room++
-  if (room > best) {
-    best = room
-    saveBest()
-  }
-  roomFadeIn = 0.45
-  newRoom()
-}
-
-function randomContent() {
-  const hasGhost = ACTIVE_GHOST_SLOTS.length > 0
-  const hasPerson = ACTIVE_PERSON_SLOTS.length > 0
-  const r = Math.random()
-
-  // 有哪些角色图，就只从已有角色图里出；没图的临时鬼/人不再出现。
-  if (hasGhost && hasPerson) {
-    if (r < 0.4) return 'ghost'
-    if (r < 0.65) return 'fake'
-    return 'empty'
-  }
-
-  if (hasGhost) return r < 0.55 ? 'ghost' : 'empty'
-  if (hasPerson) return r < 0.5 ? 'fake' : 'empty'
-  return 'empty'
-}
-
-function randomGhostType() {
-  const r = Math.random()
-  if (r < 0.33) return 'big'
-  if (r < 0.66) return 'thin'
-  return 'normal'
-}
-
-function randomSlot(slots) {
-  return slots[Math.floor(Math.random() * slots.length)]
-}
-
-function shuffleArray(arr) {
-  const copy = arr.slice()
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    const tmp = copy[i]
-    copy[i] = copy[j]
-    copy[j] = tmp
-  }
-  return copy
-}
-
-function pickGhostCount() {
-  // 多鬼按关卡阶段解锁：
-  // 1-24 关：最多 1 只鬼；
-  // 25-49 关：有概率出现 2 只鬼；
-  // 50 关以后：有概率出现 3 只鬼。
-  const available = ACTIVE_GHOST_SLOTS.length
-  if (available <= 0) return 0
-
-  let stageMax = 1
-  if (room >= 50) stageMax = 3
-  else if (room >= 25) stageMax = 2
-
-  const maxCount = Math.min(stageMax, available)
-  if (maxCount <= 1) return 1
-
-  const r = Math.random()
-
-  if (maxCount >= 3) {
-    if (r < 0.22) return 3
-    if (r < 0.55) return 2
-    return 1
-  }
-
-  // 25-49 关：开始出现 2 只鬼，但不必每次都是 2 只，避免难度突然跳太猛。
-  if (maxCount >= 2) {
-    return r < 0.38 ? 2 : 1
-  }
-
-  return 1
-}
-
-function randomGhostSlots() {
-  const count = pickGhostCount()
-  return shuffleArray(ACTIVE_GHOST_SLOTS).slice(0, count)
-}
-
-function newRoom() {
-  dragging = false
-  startX = 0
-  startDoorOpen = 0
-
-  doorOpen = 0
-  doorTarget = 0
-  doorAutoMoving = false
-  bossActive = false
-
-  if (shouldStartBossRoom()) {
-    startBossBattle(room >= getBossStageEnd(getBossStageForRoom(room)))
-    return
-  }
-
-  roomContent = randomContent()
-  ghostType = roomContent === 'ghost' ? randomGhostType() : 'normal'
-  ghostSlots = roomContent === 'ghost' ? randomGhostSlots() : []
-  ghostSlot = ghostSlots[0] || null
-  personSlot = roomContent === 'fake' ? randomSlot(ACTIVE_PERSON_SLOTS) : null
-  sealCountRequired = roomContent === 'ghost' ? Math.max(1, ghostSlots.length) : 0
-  sealCountDone = 0
-  sealEyeTriggered = false
-
-  contentVisible = false
-  hasSeenContent = false
-  danger = 0
-
-  isChangingRoom = false
-  sealAnim = 1
-  sealSuccess = false
-  sealResolveStart = 0
-  enterAnim = 0
-  enteringRoom = false
-
-  ghostThreshold = [0.24, 0.34, 0.48][Math.floor(Math.random() * 3)]
-
-  const base = 0.012 + room * 0.001
-
-  if (ghostType === 'big') dangerSpeed = base * 0.7
-  else if (ghostType === 'thin') dangerSpeed = base * DIFFICULTY[difficultyMode].thinMultiplier
-  else dangerSpeed = base * 1.1
-}
-
-function finishNextRoom() {
-  room++
-  if (room > best) {
-    best = room
-    saveBest()
-  }
-  newRoom()
-  // 安全房间用“内部门放大成外部门”的无缝转场，不再黑场淡入。
-  roomFadeIn = 0
-}
-
-function nextRoomAfterSeal() {
-  if (isChangingRoom) return
-  isChangingRoom = true
-  sealResolveStart = performance.now()
-
-  room++
-  if (room > best) {
-    best = room
-    saveBest()
-  }
-
-  setTimeout(() => {
-    newRoom()
-    roomFadeIn = 1
-  }, 520)
-}
-
-function startEnterRoom() {
-  if (isChangingRoom) return
-  isChangingRoom = true
-  enteringRoom = true
-  enterAnim = 0
-}
-
-function gameOver() {
-  gameState = 'gameover'
-}
-
-function inSealButton(x, y) {
-  return x >= sealButton.x && x <= sealButton.x + sealButton.w && y >= sealButton.y && y <= sealButton.y + sealButton.h
-}
-
-function pointerDown(x, y) {
-  if (!assetsReady) return
-
-  if (gameState === 'home') {
-    if (pointInRect(x, y, menuButtons.start)) gameState = 'difficulty'
-    else if (pointInRect(x, y, menuButtons.rules)) gameState = 'rules'
-    else if (pointInRect(x, y, menuButtons.codex)) gameState = 'codex'
-    return
-  }
-
-  if (gameState === 'difficulty') {
-    if (pointInRect(x, y, screenBackButton)) gameState = 'home'
-    else if (pointInRect(x, y, menuButtons.easy)) startGame('easy')
-    else if (pointInRect(x, y, menuButtons.hard)) startGame('hard')
-    return
-  }
-
-  if (gameState === 'rules') {
-    if (pointInRect(x, y, screenBackButton)) gameState = 'home'
-    return
-  }
-
-  if (gameState === 'codex') {
-    if (pointInRect(x, y, screenBackButton)) gameState = 'home'
-    else if (pointInRect(x, y, codexTabs.ghosts)) codexTab = 'ghosts'
-    else if (pointInRect(x, y, codexTabs.people)) codexTab = 'people'
-    return
-  }
-
-  if (gameState === 'gameover') {
-    ghostEyeUntil = 0
-    if (!difficultyMode) {
-      gameState = 'home'
-      return
-    }
-    room = 1
-    best = getStoredBest(difficultyMode)
-    gameState = 'playing'
-    roomFadeIn = 0
-    newRoom()
-    return
-  }
-
-  if (gameState !== 'playing') return
-
-  if (pointInRect(x, y, backButton)) {
-    gameState = 'home'
-    isChangingRoom = false
-    bossActive = false
-    bossPhase = 'idle'
-    dragging = false
-    doorAutoMoving = false
-    return
-  }
-
-  if (bossActive) {
-    if (bossPhase === 'sealing') {
-      if (pointInRect(x, y, bossButton)) {
-        spawnBossSealEffect()
-        bossSealsDone++
-        bossShake = 1
-        bossSealFlash = 1
-        bossDoorPressure = Math.max(0.035, bossDoorPressure - getBossSealPushBack())
-        doorOpen = bossDoorPressure
-        if (bossSealsDone >= bossSealsRequired) completeBossBattle()
-      }
-      return
-    }
-
-    // Boss房仍然要先开门确认。看到Boss后，必须关门，才进入疯狂贴封印阶段。
-    if (bossPhase === 'reveal') {
-      doorAutoMoving = false
-      dragging = true
-      startX = x
-      startDoorOpen = doorOpen
-      return
+(() => {
+  'use strict';
+
+  const VERSION = 'v0.11.0';
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const DPR_MAX = 2;
+  const STORAGE_KEY = 'next_room_v0110_save';
+
+  const ASSET_BASES = ['assets/', './', 'images/'];
+
+  const GHOSTS = [
+    { name: '猼訑', file: '猼訑.png', type: 'normal' },
+    { name: '赤鱬', file: '赤鱬.png', type: 'thin' },
+    { name: '当康', file: '当康.png', type: 'heavy' },
+    { name: '混沌', file: '混沌.png', type: 'heavy' },
+    { name: '九尾狐', file: '九尾狐.png', type: 'normal', ghostEye: true },
+    { name: '夔牛', file: '夔牛.png', type: 'heavy' },
+    { name: '麒麟', file: '麒麟.png', type: 'normal' },
+    { name: '穷奇', file: '穷奇.png', type: 'thin' },
+    { name: '饕餮', file: '饕餮.png', type: 'heavy' },
+    { name: '狰', file: '狰.png', type: 'normal' },
+    { name: '烛阴', file: '烛阴.png', type: 'thin' }
+  ];
+
+  const PEOPLE = Array.from({ length: 10 }, (_, i) => ({
+    name: `${i + 1}号人物`,
+    file: `${i + 1}号人物.png`
+  }));
+
+  const GHOST_FIRE_FILES = ['鬼火1.png', '鬼火2.png', '鬼火3.png', '鬼火4.png', '鬼火5.png'];
+
+  const BOSS_CONFIGS = [
+    { stage: 1, time: 7.0, seals: 16 },
+    { stage: 2, time: 6.5, seals: 20 },
+    { stage: 3, time: 6.0, seals: 24 },
+    { stage: 4, time: 5.8, seals: 28 },
+    { stage: 5, time: 5.5, seals: 30 }
+  ];
+
+  const state = {
+    screen: 'menu',
+    lastScreen: 'menu',
+    difficulty: 'normal',
+    room: 1,
+    mode: 'normal',
+    content: null,
+    door: 0,
+    snapTarget: null,
+    draggingDoor: false,
+    dragStartX: 0,
+    dragStartDoor: 0,
+    danger: 0,
+    sealFlash: 0,
+    transition: 0,
+    pendingNextRoom: 2,
+    resultReason: '',
+    ghostEye: 0,
+    bossDefeated: {},
+    bossWindowSeen: {},
+    toast: null,
+    galleryTab: 'ghosts',
+    save: loadSave(),
+    pointer: { x: 0, y: 0, down: false },
+    layout: null,
+    t: 0
+  };
+
+  const assets = {};
+  const allAssetFiles = [
+    '封印按钮.png',
+    ...PEOPLE.map(p => p.file),
+    ...GHOSTS.map(g => g.file),
+    ...GHOST_FIRE_FILES
+  ];
+
+  function loadSave() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) throw new Error('no save');
+      const data = JSON.parse(raw);
+      return {
+        bestRoom: Number(data.bestRoom || 1),
+        ghosts: data.ghosts || {},
+        people: data.people || {}
+      };
+    } catch (e) {
+      return { bestRoom: 1, ghosts: {}, people: {} };
     }
   }
 
-  if (isChangingRoom) return
-
-  doorAutoMoving = false
-
-  if (doorOpen <= 0.05 && hasSeenContent && inSealButton(x, y)) {
-    // 空房、人类房也会出现封印按钮；如果封错，仍然失败。
-    if (roomContent === 'ghost') {
-      // 多鬼房需要连续贴多张符。动画没贴完时不重复计数。
-      if (sealSuccess && sealAnim < 1) return
-
-      sealCountDone++
-      sealSuccess = true
-      sealAnim = 0
-
-      if (!sealEyeTriggered && ghostSlots.some((slot) => slot.id === 5)) {
-        sealEyeTriggered = true
-        activateGhostEye()
-      }
-
-      if (sealCountDone >= sealCountRequired) {
-        nextRoomAfterSeal()
-      }
-    } else {
-      gameOver()
-    }
-    return
+  function saveGame() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.save));
+    } catch (e) {}
   }
 
-  dragging = true
-  startX = x
-  startDoorOpen = doorOpen
-}
-
-function pointerMove(x) {
-  if (!dragging || gameState !== 'playing') return
-  if (isChangingRoom) return
-
-  const dx = startX - x
-  doorOpen = startDoorOpen + dx / (W * 0.55)
-  doorOpen = Math.max(0, Math.min(1, doorOpen))
-}
-
-function pointerUp() {
-  if (!dragging) return
-  dragging = false
-
-  if (gameState !== 'playing') return
-  if (isChangingRoom) return
-
-  // Boss确认阶段不使用普通门的“开到一半就自动全开”逻辑。
-  // 否则玩家开门确认 Boss 后，门会继续自动打开，无法顺利回到“关门贴符”的阶段。
-  if (bossActive && bossPhase === 'reveal') {
-    if (doorOpen > BOSS_CONFIRM_OPEN) {
-      contentVisible = true
-      hasSeenContent = true
-      bossSeen = true
-    }
-
-    // Boss一旦被确认，松手后门自动慢慢关回去；关上后进入疯狂贴封印。
-    // 如果还没确认成功，松手也先回关，鼓励玩家重新开门确认。
-    doorTarget = 0
-    if (Math.abs(doorOpen - doorTarget) < 0.015) {
-      doorOpen = doorTarget
-      doorAutoMoving = false
-    } else {
-      doorAutoMoving = true
-    }
-    return
-  }
-
-  doorTarget = doorOpen >= DOOR_SNAP_THRESHOLD ? 1 : 0
-
-  if (Math.abs(doorOpen - doorTarget) < 0.015) {
-    doorOpen = doorTarget
-    doorAutoMoving = false
-  } else {
-    doorAutoMoving = true
-  }
-}
-
-canvas.addEventListener('pointerdown', (e) => {
-  e.preventDefault()
-  canvas.setPointerCapture?.(e.pointerId)
-  pointerDown(e.clientX, e.clientY)
-})
-
-canvas.addEventListener('pointermove', (e) => {
-  e.preventDefault()
-  pointerMove(e.clientX)
-})
-
-canvas.addEventListener('pointerup', (e) => {
-  e.preventDefault()
-  pointerUp()
-})
-
-canvas.addEventListener('pointercancel', (e) => {
-  e.preventDefault()
-  pointerUp()
-})
-
-function update() {
-  if (gameState !== 'playing') return
-
-  // 黑场淡入/淡出必须优先更新，不能被 Boss 分支提前 return 卡住。
-  if (roomFadeIn > 0 && !enteringRoom) {
-    roomFadeIn = Math.max(0, roomFadeIn - ROOM_FADE_IN_SPEED)
-  }
-
-  if (bossActive) {
-    bossShake = Math.max(0, bossShake - 0.08)
-    bossSealFlash = Math.max(0, bossSealFlash - 0.1)
-    updateBossSealEffects()
-
-    if (doorAutoMoving && !dragging) {
-      const diff = doorTarget - doorOpen
-      const step = Math.min(Math.abs(diff), DOOR_AUTO_SPEED)
-      if (Math.abs(diff) <= DOOR_AUTO_SPEED) {
-        doorOpen = doorTarget
-        doorAutoMoving = false
+  function loadImageWithFallback(file) {
+    let baseIndex = 0;
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => { assets[file] = img; };
+    img.onerror = () => {
+      baseIndex += 1;
+      if (baseIndex < ASSET_BASES.length) {
+        img.src = ASSET_BASES[baseIndex] + file;
       } else {
-        doorOpen += Math.sign(diff) * step
+        assets[file] = null;
+      }
+    };
+    img.src = ASSET_BASES[baseIndex] + file;
+    assets[file] = img;
+  }
+
+  allAssetFiles.forEach(loadImageWithFallback);
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
+    const w = Math.max(320, window.innerWidth || document.documentElement.clientWidth || 390);
+    const h = Math.max(520, window.innerHeight || document.documentElement.clientHeight || 760);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    state.layout = computeLayout(w, h);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+
+  function computeLayout(w, h) {
+    const topH = Math.max(70, Math.min(88, h * 0.092));
+    const bottomH = Math.max(108, Math.min(132, h * 0.145));
+    const gameTop = topH;
+    const gameBottom = h - bottomH;
+    const gameH = gameBottom - gameTop;
+
+    const doorH = clamp(Math.min(gameH * 0.78, w * 1.18, 560), 330, 560);
+    const doorW = doorH * 0.58;
+    const doorX = (w - doorW) / 2;
+    const doorY = gameTop + Math.max(26, (gameH - doorH) * 0.44);
+
+    const holePad = Math.max(12, doorW * 0.06);
+    const bigDoor = { x: doorX, y: doorY, w: doorW, h: doorH };
+    const bigHole = {
+      x: doorX - holePad,
+      y: doorY - holePad,
+      w: doorW + holePad * 2,
+      h: doorH + holePad * 2
+    };
+
+    const smallScale = 0.36;
+    const smallDoor = {
+      w: doorW * smallScale,
+      h: doorH * smallScale,
+      x: (w - doorW * smallScale) / 2,
+      y: doorY + doorH * 0.20
+    };
+    const smallPad = holePad * smallScale;
+    const smallHole = {
+      x: smallDoor.x - smallPad,
+      y: smallDoor.y - smallPad,
+      w: smallDoor.w + smallPad * 2,
+      h: smallDoor.h + smallPad * 2
+    };
+    const smallWall = {
+      x: smallHole.x - smallDoor.w * 0.38,
+      y: smallHole.y - smallDoor.h * 0.14,
+      w: smallHole.w + smallDoor.w * 0.76,
+      h: smallHole.h + smallDoor.h * 0.24
+    };
+
+    return {
+      w, h, topH, bottomH, gameTop, gameBottom, gameH,
+      bigDoor, bigHole, smallDoor, smallHole, smallWall,
+      home: { x: 10, y: 16, w: 64, h: 36 },
+      sealButton: { x: w / 2 - 76, y: h - 96, w: 152, h: 66 },
+      bossButton: { x: w / 2 - 126, y: h - 104, w: 252, h: 74 }
+    };
+  }
+
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+  function easeInOut(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+  function randItem(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  function startRun(difficulty) {
+    state.screen = 'game';
+    state.difficulty = difficulty;
+    state.room = 1;
+    state.mode = 'normal';
+    state.door = 0;
+    state.snapTarget = null;
+    state.draggingDoor = false;
+    state.danger = 0;
+    state.sealFlash = 0;
+    state.transition = 0;
+    state.pendingNextRoom = 2;
+    state.resultReason = '';
+    state.ghostEye = 0;
+    state.bossDefeated = {};
+    state.bossWindowSeen = {};
+    state.toast = null;
+    createContent();
+  }
+
+  function bossStageForRoom(room) {
+    return Math.floor((room - 1) / 25) + 1;
+  }
+
+  function bossWindow(room) {
+    const stage = bossStageForRoom(room);
+    const end = stage * 25;
+    const start = end - 5;
+    return { stage, start, end, forced: room === end, active: room >= start && room <= end };
+  }
+
+  function bossConfig(stage) {
+    return BOSS_CONFIGS[Math.min(stage, BOSS_CONFIGS.length) - 1] || { stage, time: 5.5, seals: 30 };
+  }
+
+  function createContent() {
+    const room = state.room;
+    const win = bossWindow(room);
+
+    state.mode = 'normal';
+    state.door = 0;
+    state.snapTarget = null;
+    state.draggingDoor = false;
+    state.danger = 0;
+    state.sealFlash = 0;
+
+    if (win.active && !state.bossDefeated[win.stage]) {
+      const chance = win.forced ? 1 : (0.26 + (room - win.start) * 0.11);
+      if (Math.random() < chance) {
+        const bossGhost = GHOSTS[(win.stage * 2 + 6) % GHOSTS.length];
+        state.content = {
+          type: 'boss',
+          stage: win.stage,
+          bossGhost,
+          cfg: bossConfig(win.stage),
+          seen: false,
+          bossSeen: false,
+          hits: 0,
+          talismans: [],
+          forced: win.forced,
+          passTimer: 0
+        };
+        return;
       }
     }
 
-    if (bossPhase === 'reveal') {
-      // 鬼眼可以提前看到Boss，属于玩家运气好；
-      // 但鬼眼只负责“看见”，不能替代“开门确认”。
-      // 之前的 bug 是：鬼眼状态下 bossSeen 会在门没打开时直接变 true，
-      // 下一帧又因为 doorOpen 仍然接近 0，立刻进入 sealing，导致玩家感觉Boss房打不开门。
-      if (ghostEyeActive()) {
-        contentVisible = true
-        hasSeenContent = true
-      }
+    const r = Math.random();
+    const ghostChance = clamp(0.44 + room * 0.004, 0.44, 0.72);
+    const personChance = room < 8 ? 0.34 : 0.28;
 
-      // 必须真的把门打开到确认阈值，才算完成Boss确认。
-      if (doorOpen > BOSS_CONFIRM_OPEN) {
-        contentVisible = true
-        hasSeenContent = true
-        bossSeen = true
-      }
+    if (r < ghostChance) {
+      const count = ghostCountForRoom(room);
+      const ghosts = pickGhosts(count, room);
+      state.content = {
+        type: 'ghost',
+        ghosts,
+        requiredSeals: count,
+        sealed: 0,
+        seen: false,
+        passTimer: 0,
+        talismans: []
+      };
+    } else if (r < ghostChance + personChance) {
+      const person = randItem(PEOPLE);
+      state.content = {
+        type: 'person',
+        person,
+        seen: false,
+        passTimer: 0,
+        talismans: []
+      };
+    } else {
+      state.content = {
+        type: 'empty',
+        seen: false,
+        passTimer: 0,
+        talismans: []
+      };
+    }
+  }
 
-      // 只有“开门确认过Boss”之后，再把门关回去，才开始疯狂贴封印。
-      // v0.9.3：确认后强制把目标设为关门，避免 Boss 房门停在打开状态卡住。
-      if (bossSeen && !dragging) {
-        doorTarget = 0
-        if (doorOpen > BOSS_START_SEAL_OPEN) {
-          doorAutoMoving = true
+  function ghostCountForRoom(room) {
+    if (room < 25) return 1;
+    if (room < 50) return Math.random() < 0.34 ? 2 : 1;
+    const r = Math.random();
+    if (r < 0.22) return 3;
+    if (r < 0.58) return 2;
+    return 1;
+  }
+
+  function pickGhosts(count, room) {
+    const unlockCount = clamp(4 + Math.floor(room / 8), 4, GHOSTS.length);
+    const pool = GHOSTS.slice(0, unlockCount);
+    const picked = [];
+    while (picked.length < count) {
+      const g = randItem(pool);
+      if (!picked.includes(g)) picked.push(g);
+    }
+    return picked;
+  }
+
+  function markSeenContent() {
+    const c = state.content;
+    if (!c || c.seen) return;
+    c.seen = true;
+    if (c.type === 'ghost') {
+      c.ghosts.forEach(g => { state.save.ghosts[g.name] = true; });
+      saveGame();
+    } else if (c.type === 'person') {
+      state.save.people[c.person.name] = true;
+      saveGame();
+    } else if (c.type === 'boss') {
+      state.save.ghosts[c.bossGhost.name] = true;
+      saveGame();
+    }
+  }
+
+  function setToast(text, time = 1.4) {
+    state.toast = { text, time };
+  }
+
+  function update(dt) {
+    state.t += dt;
+    if (state.toast) {
+      state.toast.time -= dt;
+      if (state.toast.time <= 0) state.toast = null;
+    }
+    if (state.ghostEye > 0 && state.screen === 'game') {
+      state.ghostEye = Math.max(0, state.ghostEye - dt);
+    }
+
+    if (state.screen !== 'game') return;
+
+    if (state.mode === 'transition') {
+      state.transition += dt * 1.08;
+      if (state.transition >= 1) finishAdvance();
+      return;
+    }
+
+    if (state.mode === 'sealSuccess') {
+      state.sealFlash += dt;
+      if (state.sealFlash >= 0.72) {
+        startAdvance({ toRoom: state.pendingNextRoom });
+      }
+      return;
+    }
+
+    if (state.snapTarget !== null && !state.draggingDoor && state.mode === 'normal') {
+      const direction = state.snapTarget > state.door ? 1 : -1;
+      const speed = 0.92;
+      state.door += direction * speed * dt;
+      if ((direction > 0 && state.door >= state.snapTarget) || (direction < 0 && state.door <= state.snapTarget)) {
+        state.door = state.snapTarget;
+        state.snapTarget = null;
+      }
+      state.door = clamp(state.door, 0, 1);
+    }
+
+    const c = state.content;
+    if (!c) return;
+
+    if (state.door > 0.08) markSeenContent();
+
+    if (state.mode === 'bossFight') {
+      updateBossFight(dt);
+      return;
+    }
+
+    if (c.type === 'ghost') {
+      if (state.door > 0.055) {
+        const base = 0.115 + state.room * 0.0024;
+        const multi = c.ghosts.length > 1 ? 1 + (c.ghosts.length - 1) * 0.22 : 1;
+        const thinBoost = c.ghosts.some(g => g.type === 'thin') ? 1.16 : 1;
+        const easySlow = state.difficulty === 'easy' && c.ghosts.some(g => g.type === 'thin') ? 0.64 : 1;
+        const openFactor = 0.65 + state.door * 0.65;
+        state.danger += dt * base * multi * thinBoost * easySlow * openFactor;
+      } else {
+        state.danger = 0;
+      }
+      if (state.danger >= 1) {
+        gameOver('门开太久，鬼冲出来了');
+      }
+    } else if (c.type === 'person' || c.type === 'empty') {
+      if (state.door >= 0.92) {
+        c.passTimer += dt;
+        if (c.passTimer > 0.25) startAdvance({ toRoom: state.room + 1 });
+      } else {
+        c.passTimer = 0;
+      }
+    } else if (c.type === 'boss') {
+      if (state.door > 0.12) c.bossSeen = true;
+      if (c.bossSeen && state.door < 0.04 && !state.draggingDoor && state.snapTarget === null) {
+        beginBossFight();
+      }
+    }
+  }
+
+  function beginBossFight() {
+    state.mode = 'bossFight';
+    state.door = 0.06;
+    state.snapTarget = null;
+    state.danger = 0;
+    setToast('Boss开始顶门！', 1.1);
+  }
+
+  function updateBossFight(dt) {
+    const c = state.content;
+    if (!c || c.type !== 'boss') return;
+    const hpRatio = 1 - c.hits / c.cfg.seals;
+    const panicBoost = hpRatio < 0.3 ? 1.18 : 1;
+    state.door += dt / c.cfg.time * panicBoost;
+    state.door = clamp(state.door, 0, 1);
+    if (state.door >= 1) failBoss();
+  }
+
+  function startAdvance(opts = {}) {
+    state.mode = 'transition';
+    state.transition = 0;
+    state.pendingNextRoom = opts.toRoom || state.room + 1;
+    state.draggingDoor = false;
+    state.snapTarget = null;
+    state.danger = 0;
+    state.save.bestRoom = Math.max(state.save.bestRoom || 1, state.pendingNextRoom);
+    saveGame();
+  }
+
+  function finishAdvance() {
+    state.room = state.pendingNextRoom;
+    state.transition = 0;
+    createContent();
+  }
+
+  function gameOver(reason) {
+    state.resultReason = reason;
+    state.save.bestRoom = Math.max(state.save.bestRoom || 1, state.room);
+    saveGame();
+    state.screen = 'result';
+    state.mode = 'normal';
+    state.draggingDoor = false;
+    state.snapTarget = null;
+  }
+
+  function handleSealClick() {
+    if (state.screen !== 'game' || state.mode !== 'normal') return;
+    const c = state.content;
+    if (!c) return;
+
+    if (c.type === 'person') {
+      gameOver('封错了，人家只是普通人');
+      return;
+    }
+    if (c.type === 'empty') {
+      gameOver('封错了，这间房是空的');
+      return;
+    }
+    if (c.type === 'boss') {
+      if (!c.bossSeen) {
+        setToast('先开门确认');
+      } else {
+        setToast('关门后才能开始贴符');
+      }
+      return;
+    }
+    if (c.type !== 'ghost') return;
+
+    if (state.door > 0.08) {
+      setToast('先把门关上');
+      return;
+    }
+
+    c.sealed += 1;
+    c.talismans.push(randomTalisman());
+    state.sealFlash = 0.01;
+
+    if (c.sealed >= c.requiredSeals) {
+      c.ghosts.forEach(g => {
+        if (g.ghostEye) {
+          state.ghostEye = 10;
+          setToast('鬼眼开启：10秒透视', 1.6);
         }
+      });
+      state.mode = 'sealSuccess';
+      state.pendingNextRoom = state.room + 1;
+      state.snapTarget = null;
+    } else {
+      setToast('符咒贴上去了');
+    }
+  }
+
+  function handleBossSealClick() {
+    const c = state.content;
+    if (!c || c.type !== 'boss' || state.mode !== 'bossFight') return;
+    c.hits += 1;
+    c.talismans.push(randomTalisman());
+    state.door = Math.max(0, state.door - 0.115);
+    if (c.hits >= c.cfg.seals) {
+      state.bossDefeated[c.stage] = true;
+      const nextStageStart = c.stage * 25 + 1;
+      state.pendingNextRoom = nextStageStart;
+      state.mode = 'sealSuccess';
+      state.sealFlash = 0.01;
+      setToast('Boss已封印，进入下一大关', 1.4);
+    }
+  }
+
+  function failBoss() {
+    const c = state.content;
+    if (!c || c.type !== 'boss') return;
+    if (c.forced) {
+      gameOver('强制Boss战失败，Boss冲出来了');
+    } else {
+      setToast('Boss逃走了', 1.1);
+      startAdvance({ toRoom: state.room + 1 });
+    }
+  }
+
+  function randomTalisman() {
+    return {
+      rx: 0.18 + Math.random() * 0.64,
+      ry: 0.14 + Math.random() * 0.68,
+      rot: (Math.random() - 0.5) * 0.7,
+      scale: 0.72 + Math.random() * 0.38,
+      born: state.t
+    };
+  }
+
+  function getPointer(e) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function hit(p, r) {
+    return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  }
+
+  function onPointerDown(e) {
+    e.preventDefault();
+    const p = getPointer(e);
+    state.pointer = { x: p.x, y: p.y, down: true };
+
+    if (state.screen === 'menu') return handleMenuDown(p);
+    if (state.screen === 'difficulty') return handleDifficultyDown(p);
+    if (state.screen === 'rules') return handleRulesDown(p);
+    if (state.screen === 'gallery') return handleGalleryDown(p);
+    if (state.screen === 'result') return handleResultDown(p);
+    if (state.screen !== 'game') return;
+
+    const l = state.layout;
+    if (hit(p, l.home)) {
+      state.screen = 'menu';
+      state.draggingDoor = false;
+      return;
+    }
+
+    if (state.mode === 'bossFight') {
+      if (hit(p, l.bossButton)) handleBossSealClick();
+      return;
+    }
+
+    if (state.mode !== 'normal') return;
+
+    if (hit(p, l.sealButton)) {
+      handleSealClick();
+      return;
+    }
+
+    const dragZone = {
+      x: l.bigDoor.x - 18,
+      y: l.bigDoor.y - 18,
+      w: l.bigDoor.w + 70,
+      h: l.bigDoor.h + 36
+    };
+    if (hit(p, dragZone)) {
+      state.draggingDoor = true;
+      state.dragStartX = p.x;
+      state.dragStartDoor = state.door;
+      state.snapTarget = null;
+    }
+  }
+
+  function onPointerMove(e) {
+    const p = getPointer(e);
+    state.pointer.x = p.x;
+    state.pointer.y = p.y;
+    if (!state.draggingDoor || state.screen !== 'game' || state.mode !== 'normal') return;
+    e.preventDefault();
+    const l = state.layout;
+    const dx = state.dragStartX - p.x;
+    state.door = clamp(state.dragStartDoor + dx / (l.bigDoor.w * 0.82), 0, 1);
+  }
+
+  function onPointerUp(e) {
+    const p = getPointer(e);
+    state.pointer = { x: p.x, y: p.y, down: false };
+    if (state.draggingDoor) {
+      state.draggingDoor = false;
+      state.snapTarget = state.door > 0.46 ? 1 : 0;
+    }
+  }
+
+  canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
+  canvas.addEventListener('pointermove', onPointerMove, { passive: false });
+  canvas.addEventListener('pointerup', onPointerUp, { passive: false });
+  canvas.addEventListener('pointercancel', onPointerUp, { passive: false });
+
+  function menuButtons() {
+    const l = state.layout;
+    const bw = Math.min(260, l.w * 0.68);
+    const bh = 58;
+    const x = (l.w - bw) / 2;
+    const y = l.h * 0.45;
+    return {
+      start: { x, y, w: bw, h: bh },
+      rules: { x, y: y + 76, w: bw, h: bh },
+      gallery: { x, y: y + 152, w: bw, h: bh }
+    };
+  }
+
+  function handleMenuDown(p) {
+    const b = menuButtons();
+    if (hit(p, b.start)) state.screen = 'difficulty';
+    else if (hit(p, b.rules)) state.screen = 'rules';
+    else if (hit(p, b.gallery)) state.screen = 'gallery';
+  }
+
+  function handleDifficultyDown(p) {
+    const l = state.layout;
+    const bw = Math.min(270, l.w * 0.72);
+    const x = (l.w - bw) / 2;
+    const easy = { x, y: l.h * 0.43, w: bw, h: 70 };
+    const hard = { x, y: l.h * 0.43 + 94, w: bw, h: 70 };
+    const back = { x: 16, y: 18, w: 70, h: 40 };
+    if (hit(p, back)) state.screen = 'menu';
+    else if (hit(p, easy)) startRun('easy');
+    else if (hit(p, hard)) startRun('normal');
+  }
+
+  function handleRulesDown(p) {
+    if (hit(p, { x: 16, y: 18, w: 70, h: 40 })) state.screen = 'menu';
+  }
+
+  function handleGalleryDown(p) {
+    const l = state.layout;
+    if (hit(p, { x: 16, y: 18, w: 70, h: 40 })) {
+      state.screen = 'menu';
+      return;
+    }
+    const tabY = 78;
+    const tabW = Math.min(146, (l.w - 44) / 2);
+    const ghostTab = { x: 18, y: tabY, w: tabW, h: 42 };
+    const peopleTab = { x: 28 + tabW, y: tabY, w: tabW, h: 42 };
+    if (hit(p, ghostTab)) state.galleryTab = 'ghosts';
+    else if (hit(p, peopleTab)) state.galleryTab = 'people';
+  }
+
+  function handleResultDown(p) {
+    const l = state.layout;
+    const bw = Math.min(260, l.w * 0.68);
+    const x = (l.w - bw) / 2;
+    const again = { x, y: l.h * 0.58, w: bw, h: 58 };
+    const home = { x, y: l.h * 0.58 + 76, w: bw, h: 58 };
+    if (hit(p, again)) state.screen = 'difficulty';
+    else if (hit(p, home)) state.screen = 'menu';
+  }
+
+  function clear() {
+    const l = state.layout;
+    ctx.clearRect(0, 0, l.w, l.h);
+    ctx.fillStyle = '#f8f2e4';
+    ctx.fillRect(0, 0, l.w, l.h);
+  }
+
+  function draw() {
+    clear();
+    if (state.screen === 'menu') drawMenu();
+    else if (state.screen === 'difficulty') drawDifficulty();
+    else if (state.screen === 'rules') drawRules();
+    else if (state.screen === 'gallery') drawGallery();
+    else if (state.screen === 'game') drawGame();
+    else if (state.screen === 'result') drawResult();
+  }
+
+  function drawMenu() {
+    const l = state.layout;
+    drawDoodleBackground();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fffdf6';
+    roundRect(l.w / 2 - 130, l.h * 0.19, 260, 116, 24, true, true, 5);
+    ctx.fillStyle = '#111';
+    ctx.font = '900 54px system-ui, -apple-system, sans-serif';
+    ctx.fillText('下一间', l.w / 2, l.h * 0.245);
+    ctx.font = '700 15px system-ui, -apple-system, sans-serif';
+    ctx.fillText('开门一秒，识别异常', l.w / 2, l.h * 0.305);
+    ctx.font = '700 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(VERSION, l.w / 2, l.h * 0.355);
+    ctx.restore();
+
+    const b = menuButtons();
+    drawUIButton(b.start, '开始游戏');
+    drawUIButton(b.rules, '游戏规则');
+    drawUIButton(b.gallery, `图鉴 ${collectCountText()}`);
+  }
+
+  function drawDifficulty() {
+    const l = state.layout;
+    drawDoodleBackground();
+    drawBackButton();
+    drawTitleBlock('选择难度', '简单版会降低瘦子鬼速度');
+    const bw = Math.min(270, l.w * 0.72);
+    const x = (l.w - bw) / 2;
+    drawUIButton({ x, y: l.h * 0.43, w: bw, h: 70 }, '简单版', '新手 / 瘦子鬼更慢');
+    drawUIButton({ x, y: l.h * 0.43 + 94, w: bw, h: 70 }, '困难版', '原始速度 / 更紧张');
+  }
+
+  function drawRules() {
+    const l = state.layout;
+    drawDoodleBackground();
+    drawBackButton();
+    drawTitleBlock('游戏规则', '不要乱封，也不要看太久');
+    const lines = [
+      '1. 拖动门向左滑开，松手后门会自动吸附开/关。',
+      '2. 门后是鬼：看清后关门，再点“封印”。',
+      '3. 门后是人物或空房间：开到足够大即可通过。',
+      '4. 对人物或空房间乱封，会直接失败。',
+      '5. 多只鬼需要贴多张符，但按钮不会提示数量。',
+      '6. 每25关附近会出现Boss，必须先开门确认，再关门狂贴符。',
+      '7. 封印九尾狐后，会开启10秒鬼眼透视。'
+    ];
+    drawTextPanel(lines, l.w * 0.08, l.h * 0.31, l.w * 0.84, l.h * 0.50);
+  }
+
+  function drawGallery() {
+    const l = state.layout;
+    drawDoodleBackground();
+    drawBackButton();
+    ctx.save();
+    ctx.fillStyle = '#111';
+    ctx.font = '900 30px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('图鉴', l.w / 2, 45);
+    ctx.restore();
+
+    const tabY = 78;
+    const tabW = Math.min(146, (l.w - 44) / 2);
+    const ghostTab = { x: 18, y: tabY, w: tabW, h: 42 };
+    const peopleTab = { x: 28 + tabW, y: tabY, w: tabW, h: 42 };
+    drawTab(ghostTab, `鬼图鉴 ${seenGhostCount()}/${GHOSTS.length}`, state.galleryTab === 'ghosts');
+    drawTab(peopleTab, `人物图鉴 ${seenPeopleCount()}/${PEOPLE.length}`, state.galleryTab === 'people');
+
+    const list = state.galleryTab === 'ghosts' ? GHOSTS : PEOPLE;
+    const seenMap = state.galleryTab === 'ghosts' ? state.save.ghosts : state.save.people;
+    const cols = 3;
+    const gap = 12;
+    const cardW = (l.w - 32 - gap * (cols - 1)) / cols;
+    const cardH = Math.min(138, cardW * 1.35);
+    const startY = 138;
+
+    list.forEach((item, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = 16 + col * (cardW + gap);
+      const y = startY + row * (cardH + 14);
+      drawGalleryCard({ x, y, w: cardW, h: cardH }, item, !!seenMap[item.name]);
+    });
+  }
+
+  function drawResult() {
+    const l = state.layout;
+    drawDoodleBackground();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fffdf6';
+    roundRect(l.w * 0.08, l.h * 0.22, l.w * 0.84, l.h * 0.28, 24, true, true, 5);
+    ctx.fillStyle = '#111';
+    ctx.font = '900 38px system-ui, -apple-system, sans-serif';
+    ctx.fillText('游戏结束', l.w / 2, l.h * 0.30);
+    ctx.font = '700 17px system-ui, -apple-system, sans-serif';
+    wrapText(state.resultReason, l.w / 2, l.h * 0.365, l.w * 0.72, 24, 'center');
+    ctx.font = '800 16px system-ui, -apple-system, sans-serif';
+    ctx.fillText(`本次到达：第 ${state.room} 间`, l.w / 2, l.h * 0.445);
+    ctx.fillText(`最高纪录：第 ${state.save.bestRoom || 1} 间`, l.w / 2, l.h * 0.478);
+    ctx.restore();
+
+    const bw = Math.min(260, l.w * 0.68);
+    const x = (l.w - bw) / 2;
+    drawUIButton({ x, y: l.h * 0.58, w: bw, h: 58 }, '再来一局');
+    drawUIButton({ x, y: l.h * 0.58 + 76, w: bw, h: 58 }, '返回主页');
+  }
+
+  function drawGame() {
+    const l = state.layout;
+    if (state.mode === 'transition') drawTransitionScene();
+    else drawInfinityScene();
+    drawTopUI();
+    drawBottomControls();
+    drawToast();
+  }
+
+  function drawInfinityScene() {
+    const l = state.layout;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, l.topH, l.w, l.h - l.topH);
+    ctx.clip();
+
+    ctx.fillStyle = '#070707';
+    ctx.fillRect(0, l.topH, l.w, l.h - l.topH);
+
+    drawSmallWallAndDoor(l.smallWall, l.smallHole, l.smallDoor);
+    drawInteriorPerspective();
+    drawContentBehindDoor();
+    drawBigWall();
+    drawBossGlow();
+    drawDoorPanel(l.bigDoor, state.door, { big: true });
+    drawDoorTalismans();
+    drawSealSuccessGlow();
+    drawDangerVignette();
+
+    ctx.restore();
+  }
+
+  function drawTransitionScene() {
+    const l = state.layout;
+    const t = easeInOut(clamp(state.transition, 0, 1));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, l.topH, l.w, l.h - l.topH);
+    ctx.clip();
+
+    ctx.fillStyle = '#070707';
+    ctx.fillRect(0, l.topH, l.w, l.h - l.topH);
+
+    const hole = rectLerp(l.smallHole, l.bigHole, t);
+    const door = rectLerp(l.smallDoor, l.bigDoor, t);
+    const wall = {
+      x: 0,
+      y: l.topH,
+      w: l.w,
+      h: l.h - l.topH
+    };
+
+    drawPerspectiveFromHole(hole, door, t);
+    drawWallWithHole(wall, hole, { stroke: 5, fill: '#fffdf6' });
+    drawDoorPanel(door, 0, { big: false, alpha: 1 });
+
+    const innerScale = 0.36;
+    const innerDoor = {
+      w: door.w * innerScale,
+      h: door.h * innerScale,
+      x: door.x + door.w * (0.5 - innerScale / 2),
+      y: door.y + door.h * 0.21
+    };
+    const pad = Math.max(4, door.w * 0.022);
+    const innerHole = { x: innerDoor.x - pad, y: innerDoor.y - pad, w: innerDoor.w + pad * 2, h: innerDoor.h + pad * 2 };
+    const innerWall = { x: innerHole.x - innerDoor.w * 0.36, y: innerHole.y - innerDoor.h * 0.12, w: innerHole.w + innerDoor.w * 0.72, h: innerHole.h + innerDoor.h * 0.24 };
+    drawSmallWallAndDoor(innerWall, innerHole, innerDoor, 0.72);
+
+    ctx.restore();
+  }
+
+  function rectLerp(a, b, t) {
+    return {
+      x: lerp(a.x, b.x, t),
+      y: lerp(a.y, b.y, t),
+      w: lerp(a.w, b.w, t),
+      h: lerp(a.h, b.h, t)
+    };
+  }
+
+  function drawPerspectiveFromHole(hole, door, t) {
+    ctx.save();
+    ctx.globalAlpha = 0.45 + 0.25 * t;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(hole.x, hole.y);
+    ctx.lineTo(door.x, door.y);
+    ctx.moveTo(hole.x + hole.w, hole.y);
+    ctx.lineTo(door.x + door.w, door.y);
+    ctx.moveTo(hole.x, hole.y + hole.h);
+    ctx.lineTo(door.x, door.y + door.h);
+    ctx.moveTo(hole.x + hole.w, hole.y + hole.h);
+    ctx.lineTo(door.x + door.w, door.y + door.h);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawInteriorPerspective() {
+    const l = state.layout;
+    const a = l.bigHole;
+    const b = l.smallWall;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.moveTo(a.x + a.w, a.y);
+    ctx.lineTo(b.x + b.w, b.y);
+    ctx.moveTo(a.x, a.y + a.h);
+    ctx.lineTo(b.x, b.y + b.h);
+    ctx.moveTo(a.x + a.w, a.y + a.h);
+    ctx.lineTo(b.x + b.w, b.y + b.h);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.36)';
+    ctx.lineWidth = 1.5;
+    for (let i = 1; i < 4; i++) {
+      const k = i / 4;
+      const y1 = lerp(a.y + a.h, b.y + b.h, k);
+      const xL = lerp(a.x, b.x, k);
+      const xR = lerp(a.x + a.w, b.x + b.w, k);
+      ctx.beginPath();
+      ctx.moveTo(xL, y1);
+      ctx.lineTo(xR, y1);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawSmallWallAndDoor(wall, hole, door, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    drawWallWithHole(wall, hole, { stroke: 3.5, fill: '#fffdf6' });
+    drawDoorPanel(door, 0, { big: false });
+    ctx.restore();
+  }
+
+  function drawBigWall() {
+    const l = state.layout;
+    const wall = { x: 0, y: l.topH, w: l.w, h: l.h - l.topH };
+    drawWallWithHole(wall, l.bigHole, { stroke: 5.5, fill: '#fffdf6' });
+
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 9; i++) {
+      const y = l.topH + 36 + i * 52;
+      ctx.beginPath();
+      ctx.moveTo(12, y + Math.sin(i) * 4);
+      ctx.quadraticCurveTo(l.w * 0.28, y - 8, l.w * 0.46, y + 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(l.w - 12, y + 16 + Math.cos(i) * 3);
+      ctx.quadraticCurveTo(l.w * 0.72, y + 4, l.w * 0.55, y + 12);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawWallWithHole(wall, hole, opts = {}) {
+    const fill = opts.fill || '#fffdf6';
+    const stroke = opts.stroke || 4;
+    ctx.save();
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = stroke;
+
+    ctx.fillRect(wall.x, wall.y, Math.max(0, hole.x - wall.x), wall.h);
+    ctx.fillRect(hole.x + hole.w, wall.y, Math.max(0, wall.x + wall.w - (hole.x + hole.w)), wall.h);
+    ctx.fillRect(hole.x, wall.y, hole.w, Math.max(0, hole.y - wall.y));
+    ctx.fillRect(hole.x, hole.y + hole.h, hole.w, Math.max(0, wall.y + wall.h - (hole.y + hole.h)));
+
+    roundRect(hole.x, hole.y, hole.w, hole.h, 10, false, true, stroke);
+
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = Math.max(1.5, stroke * 0.45);
+    ctx.beginPath();
+    ctx.moveTo(hole.x - 12, hole.y + 10);
+    ctx.lineTo(hole.x - 12, hole.y + hole.h - 10);
+    ctx.moveTo(hole.x + hole.w + 12, hole.y + 10);
+    ctx.lineTo(hole.x + hole.w + 12, hole.y + hole.h - 10);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawDoorPanel(door, progress, opts = {}) {
+    const alpha = opts.alpha ?? doorAlphaForGhostEye();
+    const slide = door.w * 0.88 * progress;
+    const x = door.x - slide;
+    const y = door.y;
+    const w = door.w;
+    const h = door.h;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#fff9e9';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = opts.big ? 5 : 3;
+    roundRect(x, y, w, h, 14, true, true, ctx.lineWidth);
+
+    ctx.lineWidth = opts.big ? 3 : 1.8;
+    for (let i = 1; i < 5; i++) {
+      const yy = y + (h / 5) * i;
+      ctx.beginPath();
+      ctx.moveTo(x + 10, yy + Math.sin(i + state.t) * 1.2);
+      ctx.lineTo(x + w - 10, yy + Math.cos(i) * 1.3);
+      ctx.stroke();
+    }
+
+    ctx.lineWidth = opts.big ? 4 : 2.2;
+    const handleX = x + w * 0.78;
+    const handleY = y + h * 0.51;
+    ctx.beginPath();
+    ctx.arc(handleX, handleY, Math.max(4, w * 0.035), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(handleX + w * 0.04, handleY - h * 0.05);
+    ctx.lineTo(handleX + w * 0.04, handleY + h * 0.05);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function doorAlphaForGhostEye() {
+    if (state.ghostEye > 0 && state.mode === 'normal') return 0.4;
+    return 1;
+  }
+
+  function actualDoorRect() {
+    const d = state.layout.bigDoor;
+    const x = d.x - d.w * 0.88 * state.door;
+    return { x, y: d.y, w: d.w, h: d.h };
+  }
+
+  function drawBossGlow() {
+    const c = state.content;
+    if (!c || c.type !== 'boss') return;
+    const l = state.layout;
+    const pulse = 0.5 + Math.sin(state.t * 12) * 0.5;
+    const hpRatio = 1 - (c.hits || 0) / c.cfg.seals;
+    const fast = hpRatio < 0.3 ? 1 : 0.35;
+    ctx.save();
+    ctx.globalAlpha = state.mode === 'bossFight' ? 0.48 + pulse * fast * 0.24 : 0.34;
+    const g = ctx.createRadialGradient(l.bigHole.x + l.bigHole.w / 2, l.bigHole.y + l.bigHole.h / 2, 10, l.bigHole.x + l.bigHole.w / 2, l.bigHole.y + l.bigHole.h / 2, l.bigHole.w * 0.82);
+    g.addColorStop(0, 'rgba(255,28,10,0.95)');
+    g.addColorStop(0.48, 'rgba(255,28,10,0.28)');
+    g.addColorStop(1, 'rgba(255,28,10,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(l.bigHole.x - 80, l.bigHole.y - 80, l.bigHole.w + 160, l.bigHole.h + 160);
+    ctx.restore();
+  }
+
+  function drawContentBehindDoor() {
+    const c = state.content;
+    if (!c) return;
+    const l = state.layout;
+    const door = l.bigDoor;
+    const floorY = door.y + door.h * 0.89;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(l.bigHole.x, l.bigHole.y, l.bigHole.w, l.bigHole.h);
+    ctx.clip();
+
+    if (c.type === 'empty') {
+      drawEmptyRoomMark(l.bigHole);
+    } else if (c.type === 'person') {
+      drawCharacter(c.person, door.x + door.w / 2, floorY, door.h * 0.58, 'person', 1);
+    } else if (c.type === 'ghost') {
+      const count = c.ghosts.length;
+      const dangerScale = 1 + state.danger * 0.42;
+      const baseH = door.h * (count === 1 ? 0.59 : count === 2 ? 0.49 : 0.40);
+      const spread = door.w * (count === 1 ? 0 : count === 2 ? 0.25 : 0.28);
+      c.ghosts.forEach((g, i) => {
+        const offset = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
+        drawCharacter(g, door.x + door.w / 2 + offset, floorY, baseH, 'ghost', dangerScale);
+      });
+    } else if (c.type === 'boss') {
+      const scale = state.mode === 'bossFight' ? 1 + state.door * 0.32 : 1;
+      drawCharacter(c.bossGhost, door.x + door.w / 2, floorY + door.h * 0.04, door.h * 0.76, 'boss', scale);
+    }
+    ctx.restore();
+  }
+
+  function drawEmptyRoomMark(hole) {
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    const cx = hole.x + hole.w / 2;
+    const y = hole.y + hole.h * 0.62;
+    ctx.beginPath();
+    ctx.moveTo(cx - hole.w * 0.22, y);
+    ctx.quadraticCurveTo(cx, y + 20, cx + hole.w * 0.22, y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawCharacter(def, x, floorY, targetH, kind, scale = 1) {
+    const img = assets[def.file];
+    const h = targetH * scale;
+    const aspect = img && img.naturalWidth ? img.naturalWidth / img.naturalHeight : 0.62;
+    const w = h * aspect;
+    const y = floorY - h;
+
+    ctx.save();
+    if (kind === 'boss') {
+      const pulse = 0.5 + Math.sin(state.t * 14) * 0.5;
+      ctx.shadowColor = 'rgba(255,0,0,0.85)';
+      ctx.shadowBlur = 24 + pulse * 16;
+    }
+
+    if (img && img.naturalWidth) {
+      ctx.drawImage(img, x - w / 2, y, w, h);
+    } else {
+      drawFallbackCharacter(def.name, x, y, w, h, kind);
+    }
+    ctx.restore();
+  }
+
+  function drawFallbackCharacter(name, x, y, w, h, kind) {
+    ctx.save();
+    ctx.fillStyle = kind === 'person' ? '#fffdf6' : '#111';
+    ctx.strokeStyle = kind === 'person' ? '#111' : '#fffdf6';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.ellipse(x, y + h * 0.43, w * 0.38, h * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y + h * 0.14, w * 0.23, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = kind === 'person' ? '#111' : '#fffdf6';
+    ctx.font = '700 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(name.slice(0, 4), x, y + h * 0.54);
+    ctx.restore();
+  }
+
+  function drawDoorTalismans() {
+    const c = state.content;
+    if (!c || !c.talismans || !c.talismans.length) return;
+    const d = actualDoorRect();
+    c.talismans.forEach(t => {
+      const age = state.t - (t.born || state.t);
+      let alpha = 1;
+      if (state.mode === 'sealSuccess' && age > 0.15) {
+        alpha = clamp(1 - state.sealFlash / 0.72, 0, 1);
       }
+      drawSealPaper(d.x + d.w * t.rx, d.y + d.h * t.ry, d.w * 0.25 * t.scale, d.h * 0.118 * t.scale, t.rot, alpha);
+    });
+  }
 
-      if (bossSeen && !dragging && doorOpen <= BOSS_START_SEAL_OPEN) {
-        beginBossSealing()
+  function drawSealPaper(x, y, w, h, rot, alpha) {
+    const img = assets['封印按钮.png'];
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.globalAlpha = alpha;
+    if (img && img.naturalWidth) {
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    } else {
+      ctx.fillStyle = '#fff06d';
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 3;
+      roundRect(-w / 2, -h / 2, w, h, 6, true, true, 3);
+      ctx.fillStyle = '#111';
+      ctx.font = `900 ${Math.max(12, h * 0.38)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('封', 0, 0);
+    }
+    ctx.restore();
+  }
+
+  function drawSealSuccessGlow() {
+    if (state.mode !== 'sealSuccess') return;
+    const l = state.layout;
+    const alpha = clamp(1 - state.sealFlash / 0.72, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.72;
+    ctx.strokeStyle = '#ffe243';
+    ctx.lineWidth = 12;
+    roundRect(l.bigHole.x - 8, l.bigHole.y - 8, l.bigHole.w + 16, l.bigHole.h + 16, 18, false, true, 12);
+    ctx.globalAlpha = alpha * 0.32;
+    ctx.fillStyle = '#ffe243';
+    ctx.fillRect(l.bigHole.x - 24, l.bigHole.y - 24, l.bigHole.w + 48, l.bigHole.h + 48);
+    ctx.restore();
+  }
+
+  function drawDangerVignette() {
+    if (state.danger <= 0.02 || state.mode !== 'normal') return;
+    const l = state.layout;
+    ctx.save();
+    ctx.globalAlpha = clamp(state.danger, 0, 1) * 0.38;
+    const g = ctx.createRadialGradient(l.w / 2, l.h / 2, l.w * 0.15, l.w / 2, l.h / 2, l.w * 0.72);
+    g.addColorStop(0, 'rgba(255,0,0,0)');
+    g.addColorStop(1, 'rgba(255,0,0,0.9)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, l.topH, l.w, l.h - l.topH);
+    ctx.restore();
+  }
+
+  function drawTopUI() {
+    const l = state.layout;
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    ctx.fillRect(0, 0, l.w, l.topH);
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, l.topH - 2);
+    ctx.lineTo(l.w, l.topH - 2);
+    ctx.stroke();
+
+    drawMiniButton(l.home, '主页');
+
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 17px system-ui, -apple-system, sans-serif';
+    ctx.fillText(`第 ${state.room} 间`, 86, 24);
+    ctx.font = '700 12px system-ui, -apple-system, sans-serif';
+    const diff = state.difficulty === 'easy' ? '简单' : '困难';
+    ctx.fillText(`难度 ${diff}`, 86, 48);
+
+    ctx.textAlign = 'right';
+    ctx.font = '800 12px system-ui, -apple-system, sans-serif';
+    ctx.fillText(`纪录 ${state.save.bestRoom || 1}`, l.w - 12, 22);
+    ctx.fillText(`图鉴 ${collectCountText()}`, l.w - 12, 43);
+    if (state.ghostEye > 0) {
+      ctx.fillStyle = '#111';
+      ctx.fillText(`鬼眼 ${Math.ceil(state.ghostEye)}s`, l.w - 12, 63);
+    }
+
+    if (state.mode === 'bossFight' && state.content && state.content.type === 'boss') {
+      drawBossHPBar();
+    }
+    ctx.restore();
+  }
+
+  function drawBossHPBar() {
+    const l = state.layout;
+    const c = state.content;
+    const ratio = clamp(1 - c.hits / c.cfg.seals, 0, 1);
+    const x = 86;
+    const y = l.topH - 16;
+    const w = l.w - 172;
+    const h = 9;
+    ctx.save();
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 2;
+    roundRect(x, y, w, h, 4, true, true, 2);
+    ctx.fillStyle = ratio < 0.3 ? '#ff3b20' : '#111';
+    roundRect(x, y, w * ratio, h, 4, true, false, 0);
+    ctx.restore();
+  }
+
+  function drawBottomControls() {
+    const l = state.layout;
+    if (state.mode === 'transition' || state.mode === 'sealSuccess') return;
+
+    if (state.mode === 'bossFight') {
+      drawBossSealButton(l.bossButton);
+      return;
+    }
+
+    drawSealButton(l.sealButton);
+  }
+
+  function drawSealButton(r) {
+    const img = assets['封印按钮.png'];
+    ctx.save();
+    if (img && img.naturalWidth) {
+      ctx.drawImage(img, r.x, r.y, r.w, r.h);
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 4;
+      roundRect(r.x, r.y, r.w, r.h, 16, false, true, 4);
+    } else {
+      drawUIButton(r, '封 印');
+    }
+    ctx.fillStyle = '#111';
+    ctx.font = '900 25px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('封 印', r.x + r.w / 2, r.y + r.h / 2);
+    ctx.restore();
+  }
+
+  function drawBossSealButton(r) {
+    ctx.save();
+    const beat = 1 + Math.sin(state.t * 18) * 0.025;
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    ctx.translate(cx, cy);
+    ctx.scale(beat, beat);
+    const rr = { x: -r.w / 2, y: -r.h / 2, w: r.w, h: r.h };
+    ctx.fillStyle = '#fff06d';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 5;
+    roundRect(rr.x, rr.y, rr.w, rr.h, 18, true, true, 5);
+    ctx.fillStyle = '#111';
+    ctx.font = '900 24px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('疯狂贴封印！', 0, 0);
+    ctx.restore();
+  }
+
+  function drawToast() {
+    if (!state.toast) return;
+    const l = state.layout;
+    ctx.save();
+    ctx.globalAlpha = clamp(state.toast.time, 0, 1);
+    ctx.fillStyle = '#111';
+    ctx.strokeStyle = '#fffdf6';
+    ctx.lineWidth = 3;
+    const w = Math.min(l.w * 0.78, 300);
+    const h = 42;
+    const x = (l.w - w) / 2;
+    const y = l.topH + 12;
+    roundRect(x, y, w, h, 18, true, true, 3);
+    ctx.fillStyle = '#fffdf6';
+    ctx.font = '800 14px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(state.toast.text, l.w / 2, y + h / 2);
+    ctx.restore();
+  }
+
+  function drawDoodleBackground() {
+    const l = state.layout;
+    ctx.save();
+    ctx.fillStyle = '#f8f2e4';
+    ctx.fillRect(0, 0, l.w, l.h);
+    ctx.strokeStyle = 'rgba(17,17,17,0.12)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 18; i++) {
+      const x = (i * 73) % l.w;
+      const y = (i * 127) % l.h;
+      ctx.beginPath();
+      ctx.arc(x, y, 8 + (i % 4) * 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawTitleBlock(title, sub) {
+    const l = state.layout;
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    roundRect(l.w * 0.08, l.h * 0.18, l.w * 0.84, 104, 22, true, true, 5);
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'center';
+    ctx.font = '900 34px system-ui, -apple-system, sans-serif';
+    ctx.fillText(title, l.w / 2, l.h * 0.18 + 45);
+    ctx.font = '700 14px system-ui, -apple-system, sans-serif';
+    ctx.fillText(sub, l.w / 2, l.h * 0.18 + 76);
+    ctx.restore();
+  }
+
+  function drawBackButton() {
+    drawMiniButton({ x: 16, y: 18, w: 70, h: 40 }, '返回');
+  }
+
+  function drawMiniButton(r, text) {
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 3;
+    roundRect(r.x, r.y, r.w, r.h, 12, true, true, 3);
+    ctx.fillStyle = '#111';
+    ctx.font = '800 14px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, r.x + r.w / 2, r.y + r.h / 2);
+    ctx.restore();
+  }
+
+  function drawUIButton(r, title, sub = '') {
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 5;
+    roundRect(r.x, r.y, r.w, r.h, 18, true, true, 5);
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = sub ? '900 22px system-ui, -apple-system, sans-serif' : '900 24px system-ui, -apple-system, sans-serif';
+    ctx.fillText(title, r.x + r.w / 2, r.y + r.h / 2 - (sub ? 10 : 0));
+    if (sub) {
+      ctx.font = '700 12px system-ui, -apple-system, sans-serif';
+      ctx.fillText(sub, r.x + r.w / 2, r.y + r.h / 2 + 18);
+    }
+    ctx.restore();
+  }
+
+  function drawTab(r, text, active) {
+    ctx.save();
+    ctx.fillStyle = active ? '#111' : '#fffdf6';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 3;
+    roundRect(r.x, r.y, r.w, r.h, 13, true, true, 3);
+    ctx.fillStyle = active ? '#fffdf6' : '#111';
+    ctx.font = '800 13px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, r.x + r.w / 2, r.y + r.h / 2);
+    ctx.restore();
+  }
+
+  function drawGalleryCard(r, item, seen) {
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 3;
+    roundRect(r.x, r.y, r.w, r.h, 16, true, true, 3);
+    ctx.beginPath();
+    ctx.rect(r.x + 6, r.y + 6, r.w - 12, r.h - 38);
+    ctx.clip();
+    if (seen) {
+      const img = assets[item.file];
+      if (img && img.naturalWidth) {
+        const boxW = r.w - 20;
+        const boxH = r.h - 48;
+        const aspect = img.naturalWidth / img.naturalHeight;
+        let drawH = boxH;
+        let drawW = drawH * aspect;
+        if (drawW > boxW) {
+          drawW = boxW;
+          drawH = drawW / aspect;
+        }
+        ctx.drawImage(img, r.x + r.w / 2 - drawW / 2, r.y + 12 + boxH - drawH, drawW, drawH);
+      } else {
+        drawFallbackCharacter(item.name, r.x + r.w / 2, r.y + 14, r.w * 0.62, r.h * 0.65, state.galleryTab === 'people' ? 'person' : 'ghost');
       }
-      return
+    } else {
+      ctx.fillStyle = '#111';
+      ctx.globalAlpha = 0.22;
+      ctx.beginPath();
+      ctx.ellipse(r.x + r.w / 2, r.y + r.h * 0.43, r.w * 0.24, r.h * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#111';
+      ctx.font = '900 22px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('？', r.x + r.w / 2, r.y + r.h * 0.47);
     }
+    ctx.restore();
 
-    if (bossPhase === 'sealing') {
-      bossTimeLeft -= 1 / 60
-      bossDoorPressure = Math.min(1, bossDoorPressure + getBossPressureSpeed() / 60)
-      doorOpen = bossDoorPressure
-      if (bossDoorPressure >= 1 || bossTimeLeft <= 0) {
-        bossDoorPressure = 1
-        doorOpen = 1
-        bossTimeLeft = Math.max(0, bossTimeLeft)
-        failBossBattle()
+    ctx.save();
+    ctx.fillStyle = '#111';
+    ctx.font = '800 12px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(seen ? item.name : '？？？', r.x + r.w / 2, r.y + r.h - 18);
+    ctx.restore();
+  }
+
+  function drawTextPanel(lines, x, y, w, h) {
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 4;
+    roundRect(x, y, w, h, 18, true, true, 4);
+    ctx.fillStyle = '#111';
+    ctx.font = '700 14px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    let yy = y + 22;
+    lines.forEach(line => {
+      yy = wrapText(line, x + 18, yy, w - 36, 22, 'left') + 6;
+    });
+    ctx.restore();
+  }
+
+  function collectCountText() {
+    return `${seenGhostCount() + seenPeopleCount()}/${GHOSTS.length + PEOPLE.length}`;
+  }
+  function seenGhostCount() { return GHOSTS.filter(g => state.save.ghosts[g.name]).length; }
+  function seenPeopleCount() { return PEOPLE.filter(p => state.save.people[p.name]).length; }
+
+  function wrapText(text, x, y, maxWidth, lineHeight, align = 'left') {
+    ctx.save();
+    ctx.textAlign = align;
+    const words = String(text).split('');
+    let line = '';
+    let yy = y;
+    for (let i = 0; i < words.length; i++) {
+      const test = line + words[i];
+      if (ctx.measureText(test).width > maxWidth && line) {
+        ctx.fillText(line, x, yy);
+        line = words[i];
+        yy += lineHeight;
+      } else {
+        line = test;
       }
-      return
+    }
+    if (line) ctx.fillText(line, x, yy);
+    ctx.restore();
+    return yy + lineHeight;
+  }
+
+  function roundRect(x, y, w, h, r, fill, stroke, lineWidth = 1) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.lineTo(x + w - rr, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+    ctx.lineTo(x + w, y + h - rr);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+    ctx.lineTo(x + rr, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+    ctx.lineTo(x, y + rr);
+    ctx.quadraticCurveTo(x, y, x + rr, y);
+    ctx.closePath();
+    if (fill) ctx.fill();
+    if (stroke) {
+      const old = ctx.lineWidth;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+      ctx.lineWidth = old;
     }
   }
 
-  ctx.fillStyle = 'rgba(255,255,255,0.28)'
-  ctx.font = '11px sans-serif'
-  ctx.textAlign = 'right'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillText(GAME_VERSION, W - 10, H - 12)
-
-  if (sealSuccess) {
-    sealAnim += 0.08
-    if (sealAnim > 1) sealAnim = 1
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
   }
 
-  if (enteringRoom) {
-    enterAnim += ENTER_ANIM_SPEED
-    if (enterAnim >= 1) {
-      enterAnim = 1
-      finishNextRoom()
-    }
-    return
-  }
-
-  if (isChangingRoom) return
-
-  // 关门后，鬼的逼近/危险进度回到初始位置。
-  // 这样玩家可以通过“开一点看看 → 关门缓一下 → 再确认”来降低压力。
-  if (roomContent === 'ghost' && doorOpen <= 0.05) {
-    danger = 0
-  }
-
-  if (doorAutoMoving && !dragging) {
-    const diff = doorTarget - doorOpen
-    const step = Math.min(Math.abs(diff), DOOR_AUTO_SPEED)
-
-    if (Math.abs(diff) <= DOOR_AUTO_SPEED) {
-      doorOpen = doorTarget
-      doorAutoMoving = false
-    } else {
-      doorOpen += Math.sign(diff) * step
-    }
-  }
-
-  // 角色现在一开始就已经在门后，只是被前景门遮住。
-  // 开门一点点就能看到一部分；鬼眼状态下，即使门关着也能透过 60% 透明门看见。
-  if (roomContent === 'ghost' && (doorOpen > 0.08 || ghostEyeActive())) {
-    contentVisible = true
-    hasSeenContent = true
-    markSeenGhosts(ghostSlots)
-  }
-
-  if (roomContent === 'fake' && (doorOpen > 0.08 || ghostEyeActive())) {
-    contentVisible = true
-    hasSeenContent = true
-    markSeenPerson(personSlot)
-  }
-
-  // 空门也需要能封印：只要开过一点并确认是空房，关门后就显示封印按钮。
-  if (roomContent === 'empty' && doorOpen > 0.08) {
-    hasSeenContent = true
-  }
-
-  // 只有门真的打开后，鬼才会造成危险；纯鬼眼透视不涨危险值。
-  if (roomContent === 'ghost' && doorOpen > 0.08) {
-    danger += dangerSpeed
-    if (danger >= 1) {
-      danger = 1
-      gameOver()
-    }
-  }
-
-  if (roomContent !== 'ghost' && doorOpen > 0.92) {
-    startEnterRoom()
-  }
-}
-
-function roundRect(x, y, w, h, r) {
-  ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.lineTo(x + w - r, y)
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r)
-  ctx.lineTo(x + w, y + h - r)
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
-  ctx.lineTo(x + r, y + h)
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r)
-  ctx.lineTo(x, y + r)
-  ctx.quadraticCurveTo(x, y, x + r, y)
-  ctx.closePath()
-}
-
-function drawImageCover(img, x, y, w, h) {
-  if (!img) return
-  const imgRatio = img.width / img.height
-  const boxRatio = w / h
-  let sx = 0, sy = 0, sw = img.width, sh = img.height
-
-  if (imgRatio > boxRatio) {
-    sh = img.height
-    sw = sh * boxRatio
-    sx = (img.width - sw) / 2
-  } else {
-    sw = img.width
-    sh = sw / boxRatio
-    sy = (img.height - sh) / 2
-  }
-
-  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h)
-}
-
-function drawImageContain(img, x, y, w, h) {
-  if (!img) return
-  const imgRatio = img.width / img.height
-  const boxRatio = w / h
-
-  let dw = w
-  let dh = h
-  if (imgRatio > boxRatio) {
-    dh = dw / imgRatio
-  } else {
-    dw = dh * imgRatio
-  }
-
-  const dx = x + (w - dw) / 2
-  const dy = y + (h - dh) / 2
-  ctx.drawImage(img, dx, dy, dw, dh)
-}
-
-function drawImageCoverAlpha(img, x, y, w, h, alpha) {
-  ctx.save()
-  ctx.globalAlpha = alpha
-  drawImageCover(img, x, y, w, h)
-  ctx.restore()
-}
-
-function drawImageAlpha(img, x, y, w, h, alpha) {
-  if (!img) return
-  ctx.save()
-  ctx.globalAlpha = alpha
-  ctx.drawImage(img, x, y, w, h)
-  ctx.restore()
-}
-
-function drawImageContainBottom(img, centerX, bottomY, maxW, maxH) {
-  if (!img) return
-  const imgRatio = img.width / img.height
-  let drawH = maxH
-  let drawW = drawH * imgRatio
-
-  if (drawW > maxW) {
-    drawW = maxW
-    drawH = drawW / imgRatio
-  }
-
-  ctx.drawImage(img, centerX - drawW / 2, bottomY - drawH, drawW, drawH)
-}
-
-function getFrameRect() {
-  // v0.10.3：为游戏 UI 留出顶部和底部空间，不让门墙撑满全屏。
-  const targetH = H * ART_LAYOUT.frameHeight
-  const targetW = Math.min(W * ART_LAYOUT.maxFrameWidth, targetH * 0.64)
-  const x = (W - targetW) / 2
-  const y = H * ART_LAYOUT.frameTop
-  return { x, y, w: targetW, h: targetH }
-}
-
-function getOpeningRect(frameRect) {
-  return {
-    x: frameRect.x + frameRect.w * FRAME_OPENING.x,
-    y: frameRect.y + frameRect.h * FRAME_OPENING.y,
-    w: frameRect.w * FRAME_OPENING.w,
-    h: frameRect.h * FRAME_OPENING.h
-  }
-}
-
-function clipRect(rect, drawFn) {
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(rect.x, rect.y, rect.w, rect.h)
-  ctx.clip()
-  drawFn()
-  ctx.restore()
-}
-
-function getInnerFrameRect(openRect, scaleBoost = 1) {
-  const frameRatio = FRAME_ASPECT
-  const innerH = openRect.h * ART_LAYOUT.innerFrameHeight * scaleBoost
-  const innerW = innerH * frameRatio
-  return {
-    x: openRect.x + openRect.w * 0.5 - innerW / 2,
-    y: openRect.y + openRect.h * ART_LAYOUT.innerFrameY,
-    w: innerW,
-    h: innerH
-  }
-}
-
-
-function drawInkStrokeRect(x, y, w, h, lineW = 4, alpha = 1) {
-  ctx.save()
-  ctx.globalAlpha *= alpha
-  ctx.strokeStyle = '#111'
-  ctx.lineWidth = lineW
-  ctx.lineJoin = 'round'
-  ctx.strokeRect(x, y, w, h)
-  ctx.strokeStyle = 'rgba(0,0,0,0.26)'
-  ctx.lineWidth = Math.max(1, lineW * 0.36)
-  ctx.strokeRect(x + lineW * 0.9, y + lineW * 0.9, w - lineW * 1.8, h - lineW * 1.8)
-  ctx.restore()
-}
-
-function fillWallOutsideOpening(frameRect, open) {
-  ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, Math.max(0, open.y - frameRect.y))
-  ctx.fillRect(frameRect.x, open.y + open.h, frameRect.w, Math.max(0, frameRect.y + frameRect.h - (open.y + open.h)))
-  ctx.fillRect(frameRect.x, open.y, Math.max(0, open.x - frameRect.x), open.h)
-  ctx.fillRect(open.x + open.w, open.y, Math.max(0, frameRect.x + frameRect.w - (open.x + open.w)), open.h)
-}
-
-function drawGeneratedWallFrame(frameRect, darkness = 0, alpha = 1) {
-  if (!frameRect) return
-  const open = getOpeningRect(frameRect)
-  ctx.save()
-  ctx.globalAlpha *= alpha
-
-  // 门墙必须是“带洞”的墙：洞内不填色，否则会盖住角色/空间/小门。
-  ctx.fillStyle = '#f7f2e8'
-  fillWallOutsideOpening(frameRect, open)
-
-  // 纸纹也只画在洞外。
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-  ctx.rect(open.x, open.y, open.w, open.h)
-  ctx.clip('evenodd')
-  for (let i = 0; i < 12; i++) {
-    const yy = frameRect.y + frameRect.h * (0.08 + i * 0.075)
-    ctx.strokeStyle = 'rgba(0,0,0,0.035)'
-    ctx.lineWidth = Math.max(1, frameRect.w * 0.002)
-    ctx.beginPath()
-    ctx.moveTo(frameRect.x + frameRect.w * 0.04, yy)
-    ctx.lineTo(frameRect.x + frameRect.w * 0.96, yy)
-    ctx.stroke()
-  }
-  ctx.restore()
-
-  // 外框与门洞边框。
-  drawInkStrokeRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h, Math.max(4, frameRect.w * 0.014), 0.98)
-  const border = Math.max(5, frameRect.w * 0.020)
-  ctx.strokeStyle = '#050505'
-  ctx.lineWidth = border
-  ctx.lineJoin = 'round'
-  ctx.strokeRect(open.x, open.y, open.w, open.h)
-  ctx.strokeStyle = 'rgba(255,255,255,0.68)'
-  ctx.lineWidth = Math.max(2, border * 0.28)
-  ctx.strokeRect(open.x + border * 0.5, open.y + border * 0.5, open.w - border, open.h - border)
-
-  // 右侧挂签，大小随墙同步缩放，大墙和小墙完全同构。
-  const tagW = frameRect.w * 0.105
-  const tagH = frameRect.h * 0.145
-  const tagX = frameRect.x + frameRect.w * 0.858
-  const tagY = open.y + open.h * 0.28
-  ctx.fillStyle = '#fbf7ed'
-  ctx.fillRect(tagX, tagY, tagW, tagH)
-  drawInkStrokeRect(tagX, tagY, tagW, tagH, Math.max(2, frameRect.w * 0.006), 0.9)
-  ctx.fillStyle = '#111'
-  ctx.font = `${Math.max(10, Math.floor(tagW * 0.22))}px serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ;['出','门','见','喜'].forEach((ch, i) => ctx.fillText(ch, tagX + tagW / 2, tagY + tagH * (0.20 + i * 0.20)))
-
-  if (darkness > 0) {
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-    ctx.rect(open.x, open.y, open.w, open.h)
-    ctx.clip('evenodd')
-    ctx.fillStyle = `rgba(0,0,0,${darkness})`
-    ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-    ctx.restore()
-  }
-  ctx.restore()
-}
-
-function drawGeneratedRoom(open) {
-  if (!open) return
-  ctx.save()
-
-  // v0.10.5：强化“室内透视”。近处就是外部门洞，远处收束到更小的后墙，
-  // 后方小门墙会放在这个后墙区域，形成大门 / 小门同构的无限空间。
-  const cx = open.x + open.w * 0.5
-  const backW = open.w * 0.38
-  const backH = open.h * 0.40
-  const backX = cx - backW / 2
-  const backY = open.y + open.h * 0.155
-  const backBottom = backY + backH
-  const floorY = open.y + open.h * 0.585
-
-  const wash = ctx.createLinearGradient(open.x, open.y, open.x, open.y + open.h)
-  wash.addColorStop(0, 'rgba(248,244,235,0.52)')
-  wash.addColorStop(0.50, 'rgba(248,244,235,0.26)')
-  wash.addColorStop(1, 'rgba(0,0,0,0.10)')
-  ctx.fillStyle = wash
-  ctx.fillRect(open.x, open.y, open.w, open.h)
-
-  ctx.strokeStyle = 'rgba(0,0,0,0.58)'
-  ctx.lineWidth = Math.max(1.2, open.w * 0.006)
-  ctx.beginPath()
-  ctx.rect(backX, backY, backW, backH)
-  // 天花板 / 墙面四角透视线
-  ctx.moveTo(open.x, open.y); ctx.lineTo(backX, backY)
-  ctx.moveTo(open.x + open.w, open.y); ctx.lineTo(backX + backW, backY)
-  ctx.moveTo(open.x, open.y + open.h); ctx.lineTo(backX, backBottom)
-  ctx.moveTo(open.x + open.w, open.y + open.h); ctx.lineTo(backX + backW, backBottom)
-  ctx.stroke()
-
-  // 地面网格：横线逐渐向后墙收束，纵线向消失点靠拢。
-  ctx.strokeStyle = 'rgba(0,0,0,0.24)'
-  ctx.lineWidth = Math.max(0.8, open.w * 0.003)
-  for (let i = 1; i <= 5; i++) {
-    const tt = i / 6
-    const y = lerp(floorY, open.y + open.h, tt * tt)
-    const shrink = lerp(0.12, 0.02, tt)
-    ctx.beginPath()
-    ctx.moveTo(open.x + open.w * shrink, y)
-    ctx.lineTo(open.x + open.w * (1 - shrink), y)
-    ctx.stroke()
-  }
-  const vanishY = backBottom
-  for (let i = -3; i <= 3; i++) {
-    const nearX = cx + i * open.w * 0.145
-    const farX = cx + i * backW * 0.16
-    ctx.beginPath()
-    ctx.moveTo(nearX, open.y + open.h)
-    ctx.lineTo(farX, vanishY)
-    ctx.stroke()
-  }
-
-  const g = ctx.createRadialGradient(cx, open.y + open.h * 0.48, open.w * 0.18, cx, open.y + open.h * 0.48, open.w * 0.78)
-  g.addColorStop(0, 'rgba(255,255,255,0)')
-  g.addColorStop(1, 'rgba(0,0,0,0.16)')
-  ctx.fillStyle = g
-  ctx.fillRect(open.x, open.y, open.w, open.h)
-
-  ctx.restore()
-}
-
-function drawProceduralDoor(open, alpha = 1, darkness = 0) {
-  if (!open || !Number.isFinite(open.x) || !Number.isFinite(open.y) || !Number.isFinite(open.w) || !Number.isFinite(open.h) || open.w <= 1 || open.h <= 1) return
-  ctx.save()
-  ctx.globalAlpha *= alpha
-
-  // 红色竖纹木门。尺寸完全由 open 控制，后续做门素材就按这个矩形出图。
-  const g = ctx.createLinearGradient(open.x, open.y, open.x + open.w, open.y)
-  g.addColorStop(0, '#8e241d')
-  g.addColorStop(0.52, '#c74333')
-  g.addColorStop(1, '#711912')
-  ctx.fillStyle = g
-  ctx.fillRect(open.x, open.y, open.w, open.h)
-
-  const stripeCount = Math.max(16, Math.floor(open.w / 7))
-  for (let i = 0; i <= stripeCount; i++) {
-    const x = open.x + (i / stripeCount) * open.w
-    ctx.strokeStyle = i % 2 === 0 ? 'rgba(0,0,0,0.32)' : 'rgba(255,230,200,0.12)'
-    ctx.lineWidth = Math.max(1, open.w * 0.0024)
-    ctx.beginPath()
-    ctx.moveTo(x, open.y + open.h * 0.018)
-    ctx.lineTo(x + Math.sin(i * 1.8) * 1.1, open.y + open.h * 0.982)
-    ctx.stroke()
-  }
-
-  drawInkStrokeRect(open.x, open.y, open.w, open.h, Math.max(3, open.w * 0.012), 0.95)
-
-  // 门贴纸。
-  const paperW = open.w * 0.24
-  const paperH = open.h * 0.25
-  const px = open.x + open.w * 0.21
-  const py = open.y + open.h * 0.22
-  ctx.fillStyle = '#f7efd8'
-  ctx.fillRect(px, py, paperW, paperH)
-  drawInkStrokeRect(px, py, paperW, paperH, Math.max(1.5, open.w * 0.006), 0.85)
-  ctx.fillStyle = '#111'
-  ctx.font = `${Math.max(11, Math.floor(paperW * 0.22))}px serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ;['无','尽','之','门'].forEach((ch, i) => ctx.fillText(ch, px + paperW / 2, py + paperH * (0.18 + i * 0.20)))
-
-  // 门环。
-  const ringX = open.x + open.w * 0.62
-  const ringY = open.y + open.h * 0.54
-  ctx.strokeStyle = '#050505'
-  ctx.lineWidth = Math.max(2.5, open.w * 0.014)
-  ctx.beginPath()
-  ctx.arc(ringX, ringY, open.w * 0.052, 0, Math.PI * 2)
-  ctx.stroke()
-  ctx.beginPath()
-  ctx.arc(ringX, ringY, open.w * 0.11, 0.08, Math.PI * 1.92)
-  ctx.stroke()
-
-  if (darkness > 0) {
-    ctx.fillStyle = `rgba(0,0,0,${darkness})`
-    ctx.fillRect(open.x, open.y, open.w, open.h)
-  }
-  ctx.restore()
-}
-
-function getDoorVisualRect(open) {
-  // v0.10.1：门板不再占满整个门洞高度，同时加默认值防止配置遗漏导致 NaN。
-  const top = Number.isFinite(ART_LAYOUT.doorVisualTop) ? ART_LAYOUT.doorVisualTop : 0.055
-  const scaleY = Number.isFinite(ART_LAYOUT.doorVisualScaleY) ? ART_LAYOUT.doorVisualScaleY : 0.90
-  const y = open.y + open.h * top
-  const h = open.h * scaleY
-  return { x: open.x, y, w: open.w, h }
-}
-
-function drawClosedDoorSet(frameRect, alpha = 1, darkness = 0, order = 'doorTop') {
-  const open = getOpeningRect(frameRect)
-  const doorRect = getDoorVisualRect(open)
-
-  ctx.save()
-  ctx.globalAlpha *= alpha
-  // 默认门在墙面之上；用于符合“门-墙面-角色-空间-小门-小墙面”的前后顺序。
-  if (order === 'wallTop') {
-    drawProceduralDoor(doorRect, 1, darkness)
-    drawGeneratedWallFrame(frameRect, darkness, 1)
-  } else {
-    drawGeneratedWallFrame(frameRect, darkness, 1)
-    drawProceduralDoor(doorRect, 1, darkness)
-  }
-  ctx.restore()
-}
-
-function drawInnerDoorSet(openRect, scaleBoost = 1, alpha = ART_LAYOUT.innerDoorAlpha) {
-  const innerFrame = getInnerFrameRect(openRect, scaleBoost)
-  // v0.9.7：内部门不是半透明，而是完整门 + 压暗。
-  drawClosedDoorSet(innerFrame, alpha, ART_LAYOUT.innerDoorDarkness)
-}
-
-function getInnerDoorRects(openRect) {
-  const frame = getInnerFrameRect(openRect, 1)
-  return {
-    frame,
-    door: getOpeningRect(frame)
-  }
-}
-
-function lerp(a, b, t) {
-  return a + (b - a) * t
-}
-
-function lerpRect(a, b, t) {
-  return {
-    x: lerp(a.x, b.x, t),
-    y: lerp(a.y, b.y, t),
-    w: lerp(a.w, b.w, t),
-    h: lerp(a.h, b.h, t)
-  }
-}
-
-function drawExpandingInnerDoor(frameRect, openRect, t) {
-  const morph = smoothstep(t)
-  const start = getInnerDoorRects(openRect)
-
-  // 不再分别插值“小门”和“小门框”。
-  // 只插值门框矩形，再用同一套 FRAME_OPENING 计算门板位置。
-  // 这样它会像一个整体被放大、平移，最后精准贴到外部门的位置。
-  const frame = lerpRect(start.frame, frameRect, morph)
-
-  // v0.9.7：过渡中用压暗程度逐步减少来变亮，不再用半透明。
-  const darkness = lerp(ART_LAYOUT.innerDoorDarkness, 0, morph)
-  drawClosedDoorSet(frame, 1, darkness)
-}
-
-function drawRoomContent(openRect) {
-  // 鬼 / 人物在房间生成时就已经存在于门后。
-  // 这里不再用 contentVisible 控制绘制，避免角色在开到某个阈值后才突然出现。
-  if (roomContent === 'ghost') {
-    ghostSlots.forEach((slot, index) => {
-      const img = slot ? CHARACTER_ASSETS.ghosts[slot.id] : null
-      if (img) drawGhostImage(img, openRect, index, ghostSlots.length)
-    })
-  }
-
-  if (roomContent === 'fake') {
-    const img = personSlot ? CHARACTER_ASSETS.people[personSlot.id] : null
-    if (!img) return
-
-    // 安全人类进入下一间时，不再硬切消失，而是先慢慢淡出。
-    // 这样能形成“人从空间里退场，里面的门接管画面”的感觉。
-    const fadeOut = enteringRoom ? smoothstep(enterAnim / 0.62) : 0
-    const alpha = 1 - fadeOut
-    if (alpha <= 0.02) return
-
-    ctx.save()
-    ctx.globalAlpha = alpha
-    drawPersonImage(img, openRect)
-    ctx.restore()
-  }
-}
-
-function drawGhostImage(img, openRect, index = 0, total = 1) {
-  const pressureScale = 1 + danger * 0.10
-  const alpha = Math.min(1, 0.56 + danger * 0.44)
-  // v0.9.8：所有角色以同一地面线落地；单只鬼/人物用相近高度，多鬼时才略微缩小以避免重叠。
-  const offsets = total === 1 ? [0] : total === 2 ? [-0.14, 0.14] : [-0.22, 0, 0.22]
-  const sizeFactor = total === 1 ? 1 : total === 2 ? 0.82 : 0.70
-  const centerX = openRect.x + openRect.w * (0.60 + (offsets[index] || 0))
-  const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * ART_LAYOUT.characterMaxW * pressureScale * sizeFactor
-  const maxH = openRect.h * ART_LAYOUT.ghostHeight * pressureScale * sizeFactor
-
-  ctx.save()
-  ctx.globalAlpha = alpha
-  drawImageContainBottom(img, centerX, bottomY, maxW, maxH)
-  ctx.restore()
-
-  if (danger > 0.6) {
-    ctx.fillStyle = `rgba(255,255,255,${(danger - 0.6) * 0.35})`
-    ctx.beginPath()
-    ctx.arc(centerX, openRect.y + openRect.h * 0.52, openRect.w * (0.16 + danger * 0.07), 0, Math.PI * 2)
-    ctx.fill()
-  }
-}
-
-function drawPersonImage(img, openRect) {
-  // v0.9.8：人物和妖怪共用同一地面线与相近尺寸，避免人物漂浮或大小差距过大。
-  const centerX = openRect.x + openRect.w * 0.60
-  const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * ART_LAYOUT.characterMaxW
-  const maxH = openRect.h * ART_LAYOUT.personHeight
-  drawImageContainBottom(img, centerX, bottomY, maxW, maxH)
-}
-
-function drawArtRoom(frameRect, options = {}) {
-  const {
-    includeLargeDoor = true,
-    includeContent = true,
-    depthScale = 1,
-    innerDoorAlpha = ART_LAYOUT.innerDoorAlpha
-  } = options
-
-  const open = getOpeningRect(frameRect)
-  const outerDoorBase = getDoorVisualRect(open)
-
-  // 最终视觉前后顺序：大门 → 大墙面洞 → 角色 → 空间透视 → 小门 → 小墙面洞。
-  // Canvas 反向绘制：黑底 → 小墙面 → 小门 → 空间 → 角色 → 大墙面 → 大门 → UI。
-  clipRect(open, () => {
-    ctx.fillStyle = '#050505'
-    ctx.fillRect(open.x, open.y, open.w, open.h)
-
-    const innerFrame = getInnerFrameRect(open, depthScale)
-    ctx.save()
-    ctx.globalAlpha *= innerDoorAlpha
-    drawGeneratedWallFrame(innerFrame, ART_LAYOUT.innerDoorDarkness, 1)
-    drawProceduralDoor(getDoorVisualRect(getOpeningRect(innerFrame)), 1, ART_LAYOUT.innerDoorDarkness)
-    ctx.restore()
-
-    if (SHOW_WALL_AND_FLOOR) drawGeneratedRoom(open)
-    if (includeContent) drawRoomContent(open)
-  })
-
-  // 大墙面必须在角色之上、门之下，而且门洞本身透明。
-  drawGeneratedWallFrame(frameRect, 0, 1)
-
-  // 最前层大门，向左滑开。
-  if (includeLargeDoor) {
-    const slide = doorOpen * open.w * ART_LAYOUT.largeDoorSlide
-    const doorX = outerDoorBase.x - slide
-    const doorAlpha = ghostEyeActive() ? 0.6 : 1
-    ctx.save()
-    ctx.globalAlpha = doorAlpha
-    drawProceduralDoor({ x: doorX, y: outerDoorBase.y, w: outerDoorBase.w, h: outerDoorBase.h }, 1, 0)
-    ctx.restore()
-  }
-}
-
-function drawGhost(cx, cy, frameW, frameH) {
-  const alpha = Math.min(1, 0.35 + danger * 0.65)
-  let scale = Math.min(frameW, frameH) / 360
-  scale *= 1 + danger * 0.7
-
-  if (ghostType === 'big') {
-    scale *= 1.45
-    ctx.fillStyle = `rgba(0,0,0,${alpha})`
-    roundRect(cx - 70 * scale, cy - 95 * scale, 140 * scale, 190 * scale, 50 * scale)
-    ctx.fill()
-    ctx.fillStyle = `rgba(220,220,210,${alpha})`
-    ctx.beginPath()
-    ctx.ellipse(cx, cy - 42 * scale, 42 * scale, 52 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-  } else if (ghostType === 'thin') {
-    scale *= 0.82
-    ctx.fillStyle = `rgba(0,0,0,${alpha})`
-    roundRect(cx - 24 * scale, cy - 135 * scale, 48 * scale, 260 * scale, 22 * scale)
-    ctx.fill()
-    ctx.fillStyle = `rgba(220,220,210,${alpha})`
-    ctx.beginPath()
-    ctx.ellipse(cx, cy - 78 * scale, 22 * scale, 42 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-  } else {
-    ctx.fillStyle = `rgba(0,0,0,${alpha})`
-    roundRect(cx - 50 * scale, cy - 90 * scale, 100 * scale, 180 * scale, 38 * scale)
-    ctx.fill()
-    ctx.fillStyle = `rgba(220,220,210,${alpha})`
-    ctx.beginPath()
-    ctx.ellipse(cx, cy - 45 * scale, 32 * scale, 44 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-  }
-
-  ctx.fillStyle = '#000'
-  ctx.beginPath()
-  ctx.arc(cx - 13 * scale, cy - 55 * scale, 5 * scale + danger * 5, 0, Math.PI * 2)
-  ctx.arc(cx + 13 * scale, cy - 55 * scale, 5 * scale + danger * 5, 0, Math.PI * 2)
-  ctx.fill()
-
-  if (danger > 0.6) {
-    ctx.fillStyle = `rgba(255,255,255,${(danger - 0.6) * 0.4})`
-    ctx.beginPath()
-    ctx.arc(cx, cy - 50 * scale, 70 * scale + danger * 35, 0, Math.PI * 2)
-    ctx.fill()
-  }
-}
-
-function drawFake(cx, cy, frameW, frameH) {
-  const s = Math.min(frameW, frameH) / 420
-  ctx.strokeStyle = '#8b806c'
-  ctx.lineWidth = 5 * s
-
-  ctx.beginPath()
-  ctx.arc(cx, cy - 80 * s, 22 * s, 0, Math.PI * 2)
-  ctx.stroke()
-
-  ctx.beginPath()
-  ctx.moveTo(cx, cy - 56 * s)
-  ctx.lineTo(cx, cy + 48 * s)
-  ctx.moveTo(cx - 42 * s, cy - 20 * s)
-  ctx.lineTo(cx + 42 * s, cy - 20 * s)
-  ctx.moveTo(cx, cy + 48 * s)
-  ctx.lineTo(cx - 28 * s, cy + 96 * s)
-  ctx.moveTo(cx, cy + 48 * s)
-  ctx.lineTo(cx + 28 * s, cy + 96 * s)
-  ctx.stroke()
-}
-
-function drawSealButton() {
-  const canSeal = doorOpen <= 0.05 && hasSeenContent && !isChangingRoom
-  if (!canSeal) return
-
-  if (ASSETS.sealButton) {
-    drawImageContain(ASSETS.sealButton, sealButton.x, sealButton.y, sealButton.w, sealButton.h)
-    return
-  }
-
-  ctx.fillStyle = '#8b1e1e'
-  roundRect(sealButton.x, sealButton.y, sealButton.w, sealButton.h, 12)
-  ctx.fill()
-
-  ctx.strokeStyle = '#d8bd75'
-  ctx.lineWidth = 2
-  roundRect(sealButton.x, sealButton.y, sealButton.w, sealButton.h, 12)
-  ctx.stroke()
-
-  ctx.fillStyle = '#f5df9b'
-  ctx.font = '24px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillText('封 印', W / 2, sealButton.y + 37)
-}
-
-function drawTalismanImage(x, y, w, h, rot = 0, alpha = 1) {
-  ctx.save()
-  ctx.globalAlpha = alpha
-  ctx.translate(x, y)
-  ctx.rotate(rot)
-  if (ASSETS.sealButton) {
-    drawImageContain(ASSETS.sealButton, -w / 2, -h / 2, w, h)
-  } else {
-    ctx.fillStyle = '#e5c76c'
-    ctx.fillRect(-w / 2, -h / 2, w, h)
-    ctx.strokeStyle = '#9f2020'
-    ctx.lineWidth = 2
-    ctx.strokeRect(-w / 2 + 4, -h / 2 + 4, w - 8, h - 8)
-    ctx.fillStyle = '#9f2020'
-    ctx.font = '24px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText('封', 0, 0)
-  }
-  ctx.restore()
-}
-
-function drawStaticSeal(open, index, total) {
-  const cols = total <= 1 ? [0.52] : total === 2 ? [0.43, 0.61] : [0.38, 0.52, 0.66]
-  const x = open.x + open.w * (cols[index] || 0.52)
-  const y = open.y + open.h * (0.43 + (index % 2) * 0.08)
-  drawTalismanImage(x, y, 54, 112, (index - 1) * 0.06, 0.98)
-}
-
-function drawSealOnDoor(frameRect) {
-  const open = getOpeningRect(frameRect)
-
-  // v0.9.8：封印完成后不硬留符咒，门框周围亮黄光，符咒逐渐透明消失，过渡到下一门更自然。
-  const resolving = sealResolveStart > 0
-  const resolveT = resolving ? clamp01((performance.now() - sealResolveStart) / SEAL_RESOLVE_DURATION) : 0
-  const resolveFade = resolving ? (1 - smoothstep(resolveT)) : 1
-
-  if (resolving) {
-    const glow = resolveFade
-    ctx.save()
-    ctx.shadowColor = 'rgba(255,210,70,0.95)'
-    ctx.shadowBlur = 28 * glow
-    ctx.strokeStyle = `rgba(255,220,90,${0.72 * glow})`
-    ctx.lineWidth = 8
-    roundRect(frameRect.x + 6, frameRect.y + 6, frameRect.w - 12, frameRect.h - 12, 8)
-    ctx.stroke()
-    ctx.restore()
-
-    const rg = ctx.createRadialGradient(
-      frameRect.x + frameRect.w / 2, frameRect.y + frameRect.h * 0.52, open.w * 0.08,
-      frameRect.x + frameRect.w / 2, frameRect.y + frameRect.h * 0.52, open.w * 0.68
-    )
-    rg.addColorStop(0, `rgba(255,210,60,${0.18 * glow})`)
-    rg.addColorStop(1, 'rgba(255,210,60,0)')
-    ctx.fillStyle = rg
-    ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-  }
-
-  // 已贴好的符：多鬼房会保留多张符在门上；封印完成时随黄光渐隐。
-  const movingOne = sealSuccess && sealAnim < 1 ? 1 : 0
-  const staticCount = Math.max(0, sealCountDone - movingOne)
-  ctx.save()
-  ctx.globalAlpha = resolveFade
-  for (let i = 0; i < staticCount; i++) {
-    drawStaticSeal(open, i, Math.max(sealCountRequired, staticCount))
-  }
-  ctx.restore()
-
-  if (!sealSuccess || sealAnim >= 1) return
-
-  const t = sealAnim
-  const startX = W / 2
-  const startY = sealButton.y + sealButton.h / 2
-  const index = Math.max(0, sealCountDone - 1)
-  const cols = sealCountRequired <= 1 ? [0.52] : sealCountRequired === 2 ? [0.43, 0.61] : [0.38, 0.52, 0.66]
-  const endX = open.x + open.w * (cols[index] || 0.52)
-  const endY = open.y + open.h * (0.43 + (index % 2) * 0.08)
-  const ease = 1 - Math.pow(1 - t, 3)
-
-  const x = startX + (endX - startX) * ease
-  const y = startY + (endY - startY) * ease
-  const scale = 0.75 + 0.45 * Math.sin(Math.min(1, t) * Math.PI)
-  const w = 54 * scale
-  const h = 126 * scale
-
-  ctx.save()
-  ctx.globalAlpha = resolveFade
-  ctx.translate(x, y)
-  if (t > 0.82) ctx.scale(1.08, 0.94)
-  drawTalismanImage(0, 0, w, h, 0, 1)
-  ctx.restore()
-}
-
-function drawEnterTransition(baseFrameRect) {
-  if (!enteringRoom) return
-
-  const t = clamp01(enterAnim)
-  const morph = easeInOutCubic(clamp01((t - 0.02) / 0.96))
-  const open = getOpeningRect(baseFrameRect)
-  const innerStart = getInnerFrameRect(open, 1)
-  const movingFrame = lerpRect(innerStart, baseFrameRect, morph)
-
-  const pad = ART_LAYOUT.transitionClipPadding || 0
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(baseFrameRect.x - pad, baseFrameRect.y - pad, baseFrameRect.w + pad * 2, baseFrameRect.h + pad * 2)
-  ctx.clip()
-
-  // 先画当前房间空间和淡出角色，保持“门内门”的上下文。
-  const localOpen = getOpeningRect(baseFrameRect)
-  ctx.fillStyle = '#050505'
-  ctx.fillRect(localOpen.x, localOpen.y, localOpen.w, localOpen.h)
-  drawGeneratedRoom(localOpen)
-  drawRoomContent(localOpen)
-
-  // 真正进入下一间的是“小墙面+小门”这一组，整体放大并最终严丝合缝变成外层大墙+大门。
-  const brightness = lerp(ART_LAYOUT.innerDoorDarkness, 0, morph)
-  drawGeneratedWallFrame(movingFrame, brightness, 1)
-  drawProceduralDoor(getDoorVisualRect(getOpeningRect(movingFrame)), 1, brightness)
-
-  // 外层边界轻微暗角，只限制在裁切框内，不会遮挡UI。
-  const endVignette = smoothstep((t - 0.82) / 0.18)
-  if (endVignette > 0) {
-    const g = ctx.createRadialGradient(
-      W / 2, localOpen.y + localOpen.h * 0.45, localOpen.w * 0.36,
-      W / 2, localOpen.y + localOpen.h * 0.45, Math.max(W, H) * 0.78
-    )
-    g.addColorStop(0, 'rgba(0,0,0,0)')
-    g.addColorStop(1, `rgba(0,0,0,${0.14 * endVignette})`)
-    ctx.fillStyle = g
-    ctx.fillRect(baseFrameRect.x - pad, baseFrameRect.y - pad, baseFrameRect.w + pad * 2, baseFrameRect.h + pad * 2)
-  }
-
-  ctx.restore()
-}
-
-function drawPlainMenuButton(rect, title, subtitle = '', accent = '#d8bd75') {
-  ctx.fillStyle = 'rgba(18,18,18,0.96)'
-  roundRect(rect.x, rect.y, rect.w, rect.h, 16)
-  ctx.fill()
-
-  ctx.strokeStyle = accent
-  ctx.lineWidth = 2
-  roundRect(rect.x, rect.y, rect.w, rect.h, 16)
-  ctx.stroke()
-
-  ctx.fillStyle = '#fff'
-  ctx.font = rect.h >= 66 ? '24px sans-serif' : '21px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(title, rect.x + rect.w / 2, rect.y + rect.h / 2 - (subtitle ? 9 : 0))
-
-  if (subtitle) {
-    ctx.fillStyle = 'rgba(255,255,255,0.58)'
-    ctx.font = '12px sans-serif'
-    ctx.fillText(subtitle, rect.x + rect.w / 2, rect.y + rect.h / 2 + 17)
-  }
-}
-
-function drawBackButton(rect, label = '返回') {
-  ctx.fillStyle = 'rgba(0,0,0,0.58)'
-  roundRect(rect.x, rect.y, rect.w, rect.h, 10)
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(245,223,155,0.7)'
-  ctx.lineWidth = 1.5
-  roundRect(rect.x, rect.y, rect.w, rect.h, 10)
-  ctx.stroke()
-  ctx.fillStyle = '#f5df9b'
-  ctx.font = '15px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2)
-}
-
-function drawDifficultyButton(rect, title, desc, bestText, accent) {
-  ctx.fillStyle = 'rgba(18,18,18,0.96)'
-  roundRect(rect.x, rect.y, rect.w, rect.h, 16)
-  ctx.fill()
-
-  ctx.strokeStyle = accent
-  ctx.lineWidth = 2
-  roundRect(rect.x, rect.y, rect.w, rect.h, 16)
-  ctx.stroke()
-
-  ctx.fillStyle = '#fff'
-  ctx.font = '23px sans-serif'
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillText(title, rect.x + 24, rect.y + 31)
-
-  ctx.fillStyle = 'rgba(255,255,255,0.68)'
-  ctx.font = '13px sans-serif'
-  ctx.fillText(desc, rect.x + 24, rect.y + 54)
-
-  ctx.fillStyle = 'rgba(245,223,155,0.9)'
-  ctx.font = '13px sans-serif'
-  ctx.textAlign = 'right'
-  ctx.fillText(bestText, rect.x + rect.w - 20, rect.y + 44)
-}
-
-function drawLoading() {
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, W, H)
-  ctx.fillStyle = 'rgba(255,255,255,0.72)'
-  ctx.font = '18px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('加载中...', W / 2, H / 2)
-}
-
-
-function drawMenuBackground() {
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, W, H)
-
-  if (assetsReady) {
-    const frameRect = getFrameRect()
-    ctx.save()
-    ctx.globalAlpha = 0.38
-    drawArtRoom(frameRect, { includeLargeDoor: true, includeContent: false })
-    ctx.restore()
-    ctx.fillStyle = 'rgba(0,0,0,0.62)'
-    ctx.fillRect(0, 0, W, H)
-  }
-}
-
-function drawHomeMenu() {
-  drawMenuBackground()
-
-  ctx.fillStyle = '#fff'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.font = '46px sans-serif'
-  ctx.fillText('下一间', W / 2, H * 0.18)
-
-  ctx.fillStyle = 'rgba(245,223,155,0.82)'
-  ctx.font = '13px sans-serif'
-  ctx.fillText(`版本 ${GAME_VERSION}｜${GAME_VERSION_NOTE}`, W / 2, H * 0.18 + 36)
-
-  drawPlainMenuButton(menuButtons.start, '开始游戏', '选择简单 / 困难版本', '#d8bd75')
-  drawPlainMenuButton(menuButtons.rules, '游戏规则', '开门、确认、封印', '#6f8f75')
-  drawPlainMenuButton(menuButtons.codex, '图 鉴', `已收集 ${collectedTotalCount()} / ${totalCodexCount()}`, '#9f2020')
-
-  ctx.fillStyle = 'rgba(255,255,255,0.42)'
-  ctx.font = '13px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillText('见到新的鬼或人物，就会在图鉴里点亮', W / 2, H * 0.84)
-}
-
-function wrapTextLines(text, maxWidth, font) {
-  ctx.font = font
-  const result = []
-  let line = ''
-  for (const ch of text) {
-    const test = line + ch
-    if (ctx.measureText(test).width > maxWidth && line) {
-      result.push(line)
-      line = ch
-    } else {
-      line = test
-    }
-  }
-  if (line) result.push(line)
-  return result
-}
-
-function drawWrappedParagraphs(lines, x, y, maxWidth, font, lineHeight, paragraphGap) {
-  ctx.font = font
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'alphabetic'
-  let cy = y
-  lines.forEach((line) => {
-    const wrapped = wrapTextLines(line, maxWidth, font)
-    wrapped.forEach((part) => {
-      ctx.fillText(part, x, cy)
-      cy += lineHeight
-    })
-    cy += paragraphGap
-  })
-  return cy
-}
-
-function drawRulesScreen() {
-  drawMenuBackground()
-  drawBackButton(screenBackButton)
-
-  ctx.fillStyle = '#fff'
-  ctx.font = '32px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillText('游戏规则', W / 2, H * 0.16)
-
-  const lines = [
-    '1. 慢慢拉开门，观察门后的异常。',
-    '2. 看到鬼：关门后点击「封印」。',
-    '3. 看到人或空房：不要乱封，开到底进入下一间。',
-    '4. 多只鬼需要贴多张符，但按钮不会提示数量。',
-    '5. 关门后鬼会退回原位，可以多次确认。',
-    '6. 见到新鬼或新人物后，会自动点亮对应图鉴。'
-  ]
-
-  const boxX = W * 0.08
-  const boxY = H * 0.235
-  const boxW = W * 0.84
-  const boxH = Math.min(H * 0.61, 430)
-  ctx.fillStyle = 'rgba(18,18,18,0.92)'
-  roundRect(boxX, boxY, boxW, boxH, 18)
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(245,223,155,0.45)'
-  ctx.lineWidth = 1.5
-  roundRect(boxX, boxY, boxW, boxH, 18)
-  ctx.stroke()
-
-  ctx.fillStyle = 'rgba(255,255,255,0.84)'
-  const fontSize = W < 380 ? 14 : 15
-  const font = `${fontSize}px sans-serif`
-  const lineHeight = fontSize + 8
-  drawWrappedParagraphs(lines, boxX + 20, boxY + 38, boxW - 40, font, lineHeight, 8)
-}
-
-function drawCodexTab(rect, label, active) {
-  ctx.fillStyle = active ? 'rgba(139,30,30,0.94)' : 'rgba(18,18,18,0.92)'
-  roundRect(rect.x, rect.y, rect.w, rect.h, 12)
-  ctx.fill()
-  ctx.strokeStyle = active ? 'rgba(245,223,155,0.85)' : 'rgba(255,255,255,0.18)'
-  ctx.lineWidth = 1.5
-  roundRect(rect.x, rect.y, rect.w, rect.h, 12)
-  ctx.stroke()
-  ctx.fillStyle = active ? '#f5df9b' : 'rgba(255,255,255,0.62)'
-  ctx.font = '15px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2)
-}
-
-function drawCodexGrid(slots, assetGroup, seenSet, startY) {
-  const cols = 3
-  const gap = 12
-  const gridW = Math.min(W * 0.86, 390)
-  const cellW = (gridW - gap * (cols - 1)) / cols
-  const cellH = Math.min(cellW * 1.12, (H - startY - 30 - gap * 3) / 4)
-  const startX = (W - gridW) / 2
-
-  slots.forEach((slot, i) => {
-    const col = i % cols
-    const row = Math.floor(i / cols)
-    const x = startX + col * (cellW + gap)
-    const y = startY + row * (cellH + gap)
-    const hasAsset = !!CHARACTER_ASSETS[assetGroup][slot.id]
-    const seen = seenSet.has(slot.id)
-
-    ctx.fillStyle = seen ? 'rgba(28,24,20,0.95)' : 'rgba(12,12,12,0.92)'
-    roundRect(x, y, cellW, cellH, 14)
-    ctx.fill()
-    ctx.strokeStyle = seen ? 'rgba(245,223,155,0.75)' : 'rgba(255,255,255,0.16)'
-    ctx.lineWidth = 1.5
-    roundRect(x, y, cellW, cellH, 14)
-    ctx.stroke()
-
-    const img = CHARACTER_ASSETS[assetGroup][slot.id]
-    if (seen && img) {
-      drawImageContain(img, x + 8, y + 8, cellW - 16, cellH - 38)
-      ctx.fillStyle = '#f5df9b'
-      ctx.font = '12px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'alphabetic'
-      ctx.fillText(slot.name, x + cellW / 2, y + cellH - 14)
-    } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'
-      ctx.font = '32px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('?', x + cellW / 2, y + cellH * 0.43)
-      ctx.fillStyle = 'rgba(255,255,255,0.36)'
-      ctx.font = '11px sans-serif'
-      ctx.textBaseline = 'alphabetic'
-      ctx.fillText(hasAsset ? '未发现' : '未放图', x + cellW / 2, y + cellH - 14)
-    }
-  })
-}
-
-function drawCodexScreen() {
-  drawMenuBackground()
-  drawBackButton(screenBackButton)
-
-  ctx.fillStyle = '#fff'
-  ctx.font = '32px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillText('图 鉴', W / 2, H * 0.135)
-
-  drawCodexTab(codexTabs.ghosts, `鬼图鉴 ${collectedGhostCount()}/${totalGhostCount()}`, codexTab === 'ghosts')
-  drawCodexTab(codexTabs.people, `人物图鉴 ${collectedPeopleCount()}/${totalPeopleCount()}`, codexTab === 'people')
-
-  if (codexTab === 'people') {
-    drawCodexGrid(PERSON_SLOTS, 'people', SEEN_PERSON_IDS, H * 0.255)
-  } else {
-    drawCodexGrid(GHOST_SLOTS, 'ghosts', SEEN_GHOST_IDS, H * 0.255)
-  }
-}
-
-function drawDifficultyMenu() {
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, W, H)
-
-  if (assetsReady) {
-    const frameRect = getFrameRect()
-    ctx.save()
-    ctx.globalAlpha = 0.42
-    drawArtRoom(frameRect, { includeLargeDoor: true, includeContent: false })
-    ctx.restore()
-    ctx.fillStyle = 'rgba(0,0,0,0.58)'
-    ctx.fillRect(0, 0, W, H)
-  }
-
-  ctx.fillStyle = '#fff'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.font = '42px sans-serif'
-  drawBackButton(screenBackButton)
-
-  ctx.fillText('选择难度', W / 2, H * 0.2)
-
-  ctx.fillStyle = 'rgba(255,255,255,0.68)'
-  ctx.font = '15px sans-serif'
-  ctx.fillText('开始前选择一个版本', W / 2, H * 0.2 + 35)
-
-  ctx.fillStyle = 'rgba(245,223,155,0.78)'
-  ctx.font = '13px sans-serif'
-  ctx.fillText(`版本 ${GAME_VERSION}｜${GAME_VERSION_NOTE}`, W / 2, H * 0.2 + 58)
-
-  drawDifficultyButton(
-    menuButtons.easy,
-    '简单版',
-    '瘦子鬼变慢，前期更适合测试',
-    `纪录 ${getStoredBest('easy')}`,
-    '#6f8f75'
-  )
-
-  drawDifficultyButton(
-    menuButtons.hard,
-    '困难版',
-    '保留原版速度，压迫感更强',
-    `纪录 ${getStoredBest('hard')}`,
-    '#9f2020'
-  )
-
-  ctx.fillStyle = 'rgba(255,255,255,0.45)'
-  ctx.font = '13px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillText('开门确认；见鬼后关门封印，多只鬼要贴多张符', W / 2, H * 0.82)
-}
-
-
-function bossSealPosition(index, total) {
-  const col = index % 5
-  const row = Math.floor(index / 5)
-  const rowOffset = row % 2 === 0 ? 0 : 0.06
-  return {
-    fx: 0.30 + col * 0.10 + rowOffset + (Math.random() - 0.5) * 0.035,
-    fy: 0.25 + row * 0.082 + (Math.random() - 0.5) * 0.025,
-    rot: (Math.random() - 0.5) * 0.34,
-    scale: 0.82 + Math.random() * 0.32
-  }
-}
-
-function spawnBossSealEffect() {
-  const pos = bossSealPosition(bossSealsDone, bossSealsRequired)
-  const sticker = {
-    fx: clamp01(pos.fx),
-    fy: clamp01(pos.fy),
-    rot: pos.rot,
-    scale: pos.scale,
-    birth: performance.now()
-  }
-  bossSealStickers.push(sticker)
-  if (bossSealStickers.length > 36) bossSealStickers.shift()
-
-}
-
-function updateBossSealEffects() {
-  // v0.9.5：Boss符咒不再飞行，直接贴在门板局部坐标上。
-}
-
-function drawBossTalisman(x, y, scale = 1, rot = 0, alpha = 1) {
-  drawTalismanImage(x, y, 42 * scale, 92 * scale, rot, alpha)
-}
-
-function drawBossSealStickersOnDoor(doorRect) {
-  // 符咒绑定在“门板局部坐标”上，而不是屏幕坐标。
-  // Boss把门顶开/玩家把门压回去时，doorRect.x 会变化，符咒会跟着门一起动。
-  bossSealStickers.forEach((seal) => {
-    const age = Math.min(1, (performance.now() - (seal.birth || 0)) / 160)
-    const pop = 1 + 0.18 * Math.sin(age * Math.PI)
-    const x = doorRect.x + doorRect.w * seal.fx
-    const y = doorRect.y + doorRect.h * seal.fy
-    drawBossTalisman(x, y, seal.scale * pop, seal.rot, 0.98)
-  })
-}
-
-function drawBossButton() {
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.018)
-  ctx.fillStyle = '#9f2020'
-  roundRect(bossButton.x, bossButton.y, bossButton.w, bossButton.h, 18)
-  ctx.fill()
-
-  ctx.strokeStyle = `rgba(245,223,155,${0.72 + pulse * 0.22})`
-  ctx.lineWidth = 3
-  roundRect(bossButton.x, bossButton.y, bossButton.w, bossButton.h, 18)
-  ctx.stroke()
-
-  ctx.fillStyle = '#f5df9b'
-  ctx.font = '26px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('疯狂贴封印！', W / 2, bossButton.y + bossButton.h / 2)
-}
-
-function drawBossBattle(frameRect) {
-  const shakePower = bossShake * 8
-  const sx = (Math.random() - 0.5) * shakePower
-  const sy = (Math.random() - 0.5) * shakePower
-  const open = getOpeningRect(frameRect)
-  const hpRatio = clamp01(1 - bossSealsDone / Math.max(1, bossSealsRequired))
-  const pressure = clamp01(bossDoorPressure || doorOpen)
-  const panic = hpRatio < 0.3 ? 0.5 + 0.5 * Math.sin(performance.now() * 0.035) : 0.25 + 0.25 * Math.sin(performance.now() * 0.014)
-  const revealAlpha = bossPhase === 'reveal' && !bossSeen && !ghostEyeActive() ? clamp01((doorOpen - 0.06) / 0.28) : 1
-
-  ctx.save()
-  ctx.translate(sx, sy)
-
-  // 先画没有前景门的房间，再把Boss和红光画在门后，最后再画门框与前景门。
-  drawArtRoom(frameRect, { includeLargeDoor: false, includeContent: false, innerDoorAlpha: 0.72 })
-
-  clipRect(open, () => {
-    const glowCenterX = open.x + open.w * (0.5 + 0.04 * Math.sin(performance.now() * 0.006))
-    const glowCenterY = open.y + open.h * 0.46
-    const glowPower = bossPhase === 'sealing' ? 0.42 + pressure * 0.38 + panic * 0.18 : 0.22 + doorOpen * 0.38
-    const glow = ctx.createRadialGradient(glowCenterX, glowCenterY, open.w * 0.06, glowCenterX, glowCenterY, open.w * 0.78)
-    glow.addColorStop(0, `rgba(255,45,25,${glowPower})`)
-    glow.addColorStop(0.45, `rgba(125,0,0,${glowPower * 0.55})`)
-    glow.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = glow
-    ctx.fillRect(open.x - open.w * 0.25, open.y - open.h * 0.14, open.w * 1.5, open.h * 1.25)
-
-    // Boss 主体：优先复用已有鬼图，否则画一个更纯粹的幽灵剪影。
-    const bossImg = ACTIVE_GHOST_SLOTS[0] ? CHARACTER_ASSETS.ghosts[ACTIVE_GHOST_SLOTS[0].id] : null
-    const lunge = bossPhase === 'sealing' ? pressure * 0.16 : doorOpen * 0.05
-    const bossBottom = open.y + open.h * (ART_LAYOUT.characterBottom + lunge * 0.10)
-    const bossH = open.h * (ART_LAYOUT.bossHeight + lunge * 0.20)
-    const bossW = open.w * (ART_LAYOUT.bossMaxW + lunge * 0.14)
-
-    ctx.save()
-    ctx.globalAlpha = revealAlpha
-    ctx.shadowColor = `rgba(255,0,0,${0.72 + panic * 0.28})`
-    ctx.shadowBlur = 24 + panic * 32 + pressure * 18
-    if (bossImg) {
-      drawImageContainBottom(bossImg, W / 2, bossBottom, bossW, bossH)
-    } else {
-      ctx.fillStyle = '#050505'
-      roundRect(W / 2 - bossW * 0.28, bossBottom - bossH, bossW * 0.56, bossH, 46)
-      ctx.fill()
-      ctx.fillStyle = '#f1e9d8'
-      ctx.beginPath()
-      ctx.ellipse(W / 2, bossBottom - bossH * 0.64, bossW * 0.16, bossH * 0.18, 0, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    ctx.restore()
-
-    // v0.9.5：符咒不再贴在Boss身上；统一贴在前景门板上。
-  })
-
-  // 门框和前景门最后画：Boss封印阶段会把门硬顶开；每贴一次会压回去。
-  ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-  const slide = doorOpen * open.w * ART_LAYOUT.largeDoorSlide
-  const doorX = open.x - slide
-  const doorAlpha = ghostEyeActive() ? 0.6 : 1
-  drawImageCoverAlpha(ASSETS.door, doorX, open.y, open.w, open.h, doorAlpha)
-
-  if (bossPhase === 'sealing') {
-    drawBossSealStickersOnDoor({ x: doorX, y: open.y, w: open.w, h: open.h })
-  }
-
-  // 门缝红光必须在门上方再补一层，让“压不住”的感觉更明显。
-  if (doorOpen > 0.02 && Number.isFinite(open.x) && Number.isFinite(open.y) && Number.isFinite(open.w) && Number.isFinite(open.h)) {
-    const crackW = Math.max(3, open.w * Math.min(0.18, doorOpen * 0.18))
-    const crackX = open.x + open.w * (1 - Math.min(0.98, doorOpen * ART_LAYOUT.largeDoorSlide))
-    const crackAlpha = bossPhase === 'sealing' ? 0.35 + pressure * 0.45 : 0.22 + doorOpen * 0.32
-    const g = ctx.createLinearGradient(crackX - crackW, open.y, crackX + crackW * 2, open.y)
-    g.addColorStop(0, 'rgba(255,0,0,0)')
-    g.addColorStop(0.5, `rgba(255,44,20,${crackAlpha})`)
-    g.addColorStop(1, 'rgba(255,0,0,0)')
-    ctx.fillStyle = g
-    ctx.fillRect(crackX - crackW, open.y + open.h * 0.05, crackW * 3, open.h * 0.9)
-  }
-
-
-  ctx.restore()
-
-  // 顶部 Boss 血条 / 状态提示。
-  const barW = Math.min(W * 0.78, 360)
-  const barH = 16
-  const barX = (W - barW) / 2
-  const barY = 112
-  ctx.fillStyle = 'rgba(0,0,0,0.72)'
-  roundRect(barX, barY, barW, barH, 8)
-  ctx.fill()
-  ctx.fillStyle = hpRatio < 0.3 ? `rgba(255,40,25,${0.65 + panic * 0.35})` : '#b42323'
-  roundRect(barX, barY, barW * hpRatio, barH, 8)
-  ctx.fill()
-  ctx.strokeStyle = '#f5df9b'
-  ctx.lineWidth = 2
-  roundRect(barX, barY, barW, barH, 8)
-  ctx.stroke()
-
-  ctx.fillStyle = '#f5df9b'
-  ctx.font = '15px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  if (bossPhase === 'reveal') {
-    const hint = bossSeen ? '关上门，准备封印！' : (ghostEyeActive() ? '鬼眼看见了 Boss，开门确认！' : '门后有红光，开门确认！')
-    ctx.fillText(`第 ${bossStage} 大关 Boss｜${hint}`, W / 2, barY - 10)
-  } else {
-    ctx.fillText(`第 ${bossStage} 大关 Boss｜${bossTimeLeft.toFixed(1)}s`, W / 2, barY - 10)
-  }
-
-  if (bossPhase === 'sealing') {
-    // 门缝危险条：越满说明门越要被顶开。
-    const pressureY = barY + 24
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'
-    roundRect(barX, pressureY, barW, 8, 4)
-    ctx.fill()
-    ctx.fillStyle = `rgba(255,70,35,${0.65 + panic * 0.25})`
-    roundRect(barX, pressureY, barW * pressure, 8, 4)
-    ctx.fill()
-    drawBossButton()
-  }
-}
-
-function drawGameUI() {
-  // 固定在最上层的纸质 HUD，避免黑底下看不到 UI。
-  const pad = Math.max(10, W * 0.025)
-  const topH = Math.max(86, H * 0.105)
-  ctx.save()
-  ctx.fillStyle = 'rgba(247,242,232,0.94)'
-  ctx.fillRect(pad, pad, W - pad * 2, topH)
-  drawInkStrokeRect(pad, pad, W - pad * 2, topH, 3, 0.9)
-
-  drawBackButton(backButton, '主页')
-
-  ctx.fillStyle = '#111'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.font = '22px sans-serif'
-  ctx.fillText(`第 ${room} 间`, W / 2, pad + 34)
-
-  ctx.font = '13px sans-serif'
-  ctx.fillText(`${DIFFICULTY[difficultyMode].name}｜最高纪录：${best}`, W / 2, pad + 58)
-
-  ctx.fillStyle = '#9f2020'
-  ctx.font = '13px sans-serif'
-  ctx.textAlign = 'right'
-  ctx.fillText(`图鉴 ${collectedTotalCount()} / ${totalCodexCount()}`, W - pad - 10, pad + 34)
-
-  if (ghostEyeActive()) {
-    ctx.fillStyle = '#135a32'
-    ctx.font = '13px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText(`鬼眼开启：${ghostEyeLeftSeconds().toFixed(1)}s`, W / 2, pad + 78)
-  }
-
-  ctx.fillStyle = 'rgba(255,255,255,0.35)'
-  ctx.font = '11px sans-serif'
-  ctx.textAlign = 'right'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillText(GAME_VERSION, W - 10, H - 12)
-  ctx.restore()
-}
-
-function draw() {
-  if (!assetsReady) {
-    drawLoading()
-    return
-  }
-
-  if (gameState === 'home') {
-    drawHomeMenu()
-    return
-  }
-
-  if (gameState === 'difficulty') {
-    drawDifficultyMenu()
-    return
-  }
-
-  if (gameState === 'rules') {
-    drawRulesScreen()
-    return
-  }
-
-  if (gameState === 'codex') {
-    drawCodexScreen()
-    return
-  }
-
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, W, H)
-
-  const frameRect = getFrameRect()
-  if (bossActive) {
-    drawBossBattle(frameRect)
-  } else if (enteringRoom) {
-    drawEnterTransition(frameRect)
-  } else {
-    drawArtRoom(frameRect, { includeLargeDoor: true, includeContent: true })
-    drawSealOnDoor(frameRect)
-    drawSealButton()
-  }
-
-  if (roomFadeIn > 0 && !enteringRoom) {
-    ctx.fillStyle = `rgba(0,0,0,${roomFadeIn})`
-    ctx.fillRect(0, 0, W, H)
-  }
-
-  // 游戏上方 UI 最后绘制，确保不会被放大的门或转场盖住。
-  drawGameUI()
-
-  if (gameState === 'gameover') {
-    ctx.fillStyle = 'rgba(0,0,0,0.82)'
-    ctx.fillRect(0, 0, W, H)
-
-    ctx.fillStyle = '#fff'
-    ctx.font = '32px sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'alphabetic'
-    ctx.fillText('游戏结束', W / 2, H / 2 - 30)
-
-    ctx.font = '18px sans-serif'
-    ctx.fillText(`你到达了第 ${room} 间`, W / 2, H / 2 + 10)
-    ctx.fillText(`当前难度：${DIFFICULTY[difficultyMode].name}`, W / 2, H / 2 + 42)
-    ctx.fillText('点击屏幕重新开始', W / 2, H / 2 + 76)
-  }
-}
-
-function loop() {
-  update()
-  draw()
-  requestAnimationFrame(loop)
-}
-
-loadAssets()
-  .catch((err) => {
-    console.error('图片资源加载失败：', err)
-  })
-
-loop()
+  requestAnimationFrame(loop);
+})();
