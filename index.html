@@ -94,6 +94,7 @@
       font-weight: 800;
       line-height: 1.45;
       pointer-events: none;
+      white-space: pre-wrap;
     }
   </style>
 </head>
@@ -148,12 +149,18 @@
       };
 
       window.addEventListener("error", function (e) {
+        var target = e && e.target;
+        if (target && target.tagName === "SCRIPT") {
+          window.showGameError("找不到 game.js。\n请确认文件结构是：index.html / game.js / assets/");
+          return;
+        }
+
         var msg = e && e.message ? e.message : "未知错误";
-        window.showGameError("游戏脚本加载或运行出错：" + msg);
-      });
+        window.showGameError("游戏脚本运行出错：\n" + msg);
+      }, true);
     })();
   </script>
 
-  <script src="./game.js?v=0.11.15b"></script>
+  <script src="./game.js?v=0.11.17"></script>
 </body>
 </html>
