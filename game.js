@@ -1,12 +1,12 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.6';
+  const VERSION = 'v0.11.7';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0116_save';
+  const STORAGE_KEY = 'next_room_v0117_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
@@ -49,6 +49,7 @@
 
   const state = {
     screen: 'menu',
+    lang: 'zh',
     lastScreen: 'menu',
     difficulty: 'normal',
     room: 1,
@@ -674,12 +675,17 @@
     return {
       start: { x, y, w: bw, h: bh },
       rules: { x, y: y + 76, w: bw, h: bh },
-      gallery: { x, y: y + 152, w: bw, h: bh }
+      gallery: { x, y: y + 152, w: bw, h: bh },
+      lang: { x: l.w - 82, y: 18, w: 64, h: 36 }
     };
   }
 
   function handleMenuDown(p) {
     const b = menuButtons();
+    if (hit(p, b.lang)) {
+      state.lang = state.lang === 'zh' ? 'en' : 'zh';
+      return;
+    }
     if (hit(p, b.start)) state.screen = 'difficulty';
     else if (hit(p, b.rules)) state.screen = 'rules';
     else if (hit(p, b.gallery)) { state.lastScreen = 'menu'; state.screen = 'gallery'; }
@@ -745,24 +751,26 @@
   function drawMenu() {
     const l = state.layout;
     drawDoodleBackground();
+    const en = state.lang === 'en';
     ctx.save();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fffdf6';
-    roundRect(l.w / 2 - 130, l.h * 0.19, 260, 116, 24, true, true, 5);
+    roundRect(l.w / 2 - 138, l.h * 0.18, 276, 126, 24, true, true, 5);
     ctx.fillStyle = '#111';
-    ctx.font = '900 54px system-ui, -apple-system, sans-serif';
-    ctx.fillText('下一间', l.w / 2, l.h * 0.245);
+    ctx.font = en ? '900 44px system-ui, -apple-system, sans-serif' : '900 54px system-ui, -apple-system, sans-serif';
+    ctx.fillText(en ? 'NEXT ROOM' : '下一间', l.w / 2, l.h * 0.24);
     ctx.font = '700 15px system-ui, -apple-system, sans-serif';
-    ctx.fillText('开门一秒，识别异常', l.w / 2, l.h * 0.305);
+    ctx.fillText(en ? 'Open. Observe. Decide.' : '开门一秒，识别异常', l.w / 2, l.h * 0.305);
     ctx.font = '700 13px system-ui, -apple-system, sans-serif';
-    ctx.fillText(VERSION, l.w / 2, l.h * 0.355);
+    ctx.fillText(VERSION, l.w / 2, l.h * 0.36);
     ctx.restore();
 
     const b = menuButtons();
-    drawUIButton(b.start, '开始游戏');
-    drawUIButton(b.rules, '游戏规则');
-    drawUIButton(b.gallery, `图鉴 ${collectCountText()}`);
+    drawMiniButton(b.lang, en ? '中' : 'EN');
+    drawUIButton(b.start, en ? 'Start' : '开始游戏');
+    drawUIButton(b.rules, en ? 'Rules' : '游戏规则');
+    drawUIButton(b.gallery, en ? `Archive ${collectCountText()}` : `图鉴 ${collectCountText()}`);
   }
 
   function drawDifficulty() {
@@ -937,56 +945,78 @@
     const l = state.layout;
     const a = holeArg || l.bigHole;
     const b = wallArg || l.smallWall;
-    const floorNearY = a.y + a.h;
-    const floorFarY = b.y + b.h;
+
+    const frontL = { x: a.x, y: a.y + a.h };
+    const frontR = { x: a.x + a.w, y: a.y + a.h };
+    const backL = { x: b.x, y: b.y + b.h };
+    const backR = { x: b.x + b.w, y: b.y + b.h };
+    const backTopL = { x: b.x, y: b.y };
+    const backTopR = { x: b.x + b.w, y: b.y };
+    const frontTopL = { x: a.x, y: a.y };
+    const frontTopR = { x: a.x + a.w, y: a.y };
+
+    function interp(p, q, t) {
+      return { x: lerp(p.x, q.x, t), y: lerp(p.y, q.y, t) };
+    }
+    function floorPoint(xFrac, depth) {
+      const left = interp(frontL, backL, depth);
+      const right = interp(frontR, backR, depth);
+      return interp(left, right, xFrac);
+    }
+    function depthEase(i, total) {
+      const t = i / total;
+      return 1 - Math.pow(1 - t, 1.72);
+    }
 
     ctx.save();
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+
+    // 房间结构线：外门洞向内墙收束，内墙本身是一个被掏空放小门的白墙。
+    ctx.strokeStyle = 'rgba(0,0,0,0.42)';
     ctx.lineWidth = 2;
-
-    // 墙面与空间边界：参考图里的房间透视，但线条不要卡死在门洞上。
     ctx.beginPath();
-    ctx.moveTo(a.x - a.w * 0.06, a.y + a.h * 0.02);
-    ctx.lineTo(b.x, b.y);
-    ctx.moveTo(a.x + a.w * 1.06, a.y + a.h * 0.02);
-    ctx.lineTo(b.x + b.w, b.y);
-    ctx.moveTo(a.x - a.w * 0.06, floorNearY);
-    ctx.lineTo(b.x, floorFarY);
-    ctx.moveTo(a.x + a.w * 1.06, floorNearY);
-    ctx.lineTo(b.x + b.w, floorFarY);
+    ctx.moveTo(frontTopL.x, frontTopL.y);
+    ctx.lineTo(backTopL.x, backTopL.y);
+    ctx.moveTo(frontTopR.x, frontTopR.y);
+    ctx.lineTo(backTopR.x, backTopR.y);
+    ctx.moveTo(frontL.x, frontL.y);
+    ctx.lineTo(backL.x, backL.y);
+    ctx.moveTo(frontR.x, frontR.y);
+    ctx.lineTo(backR.x, backR.y);
     ctx.stroke();
 
-    // 门内落地线
-    ctx.lineWidth = 2.4;
+    // 前后落地线，保证门和房间都“站在地上”。
+    ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.moveTo(a.x - a.w * 0.05, floorNearY);
-    ctx.lineTo(a.x + a.w * 1.05, floorNearY);
+    ctx.moveTo(frontL.x, frontL.y);
+    ctx.lineTo(frontR.x, frontR.y);
+    ctx.moveTo(backL.x, backL.y);
+    ctx.lineTo(backR.x, backR.y);
     ctx.stroke();
 
-    // 地板透视网格，只在地面区域出现。
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-    ctx.lineWidth = 1.1;
-    const vanX = b.x + b.w / 2;
-    const farHalf = b.w * 0.46;
-    for (let i = -3; i <= 3; i++) {
-      const startX = a.x + a.w * (0.5 + i * 0.16);
-      const endX = vanX + i * farHalf * 0.18;
+    // 地砖网格：所有纵横线都投射到同一个四边形地面里，避免错位。
+    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
+    ctx.lineWidth = 1.05;
+
+    for (let i = 1; i <= 6; i++) {
+      const xFrac = i / 7;
+      const p0 = floorPoint(xFrac, 0);
+      const p1 = floorPoint(xFrac, 1);
       ctx.beginPath();
-      ctx.moveTo(startX, floorNearY);
-      ctx.lineTo(endX, floorFarY);
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
       ctx.stroke();
     }
-    for (let i = 1; i <= 4; i++) {
-      const k = i / 5;
-      const kk = k * k;
-      const y = lerp(floorNearY, floorFarY, kk);
-      const left = lerp(a.x - a.w * 0.04, b.x, kk);
-      const right = lerp(a.x + a.w * 1.04, b.x + b.w, kk);
+
+    for (let i = 1; i <= 6; i++) {
+      const d = depthEase(i, 7);
+      const left = floorPoint(0, d);
+      const right = floorPoint(1, d);
       ctx.beginPath();
-      ctx.moveTo(left, y);
-      ctx.lineTo(right, y);
+      ctx.moveTo(left.x, left.y);
+      ctx.lineTo(right.x, right.y);
       ctx.stroke();
     }
+
     ctx.restore();
   }
 
