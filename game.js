@@ -8,8 +8,8 @@
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.9.6'
-const GAME_VERSION_NOTE = '新素材同步版'
+const GAME_VERSION = 'v0.9.8'
+const GAME_VERSION_NOTE = '转场裁切/封印消失/角色统一落地版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -42,7 +42,7 @@ const ASSET_PATHS = {
   room: '房间内.png',         // 门后的房间空间
   wall: '房间内.png',         // 兼容旧变量，不再调用旧 wall.png
   floor: '房间内.png',        // 兼容旧变量，不再调用旧 floor.png
-  door: '门.png',             // 外层 / 内层滑动门
+  door: '门.png',             // 原始门图保留加载；实际门板改为代码复刻，避免尺寸不适配
   sealButton: '封印按钮.png'  // 封印按钮 / 符咒贴图
 }
 
@@ -105,10 +105,12 @@ const ART_LAYOUT = {
   innerFrameY: 0.30,        // 缩小门框位置，越小越靠上/越深
   innerDoorInset: 0.12,     // 缩小门在缩小门框内收进去多少
   roomWallDarkness: 0.22,   // 房间里面墙壁压暗程度，0=不压暗，越大越暗
-  innerDoorAlpha: 0.56,     // 房间里面的小门/小门框透明度，越低越暗，避免转场时突然变亮
-  ghostHeight: 0.55,        // 角色图片高度，占门洞高度；后续可微调
-  personHeight: 0.50,       // 人物图片高度，占门洞高度
-  characterBottom: 0.84     // 角色脚底/底部位置，占门洞高度
+  innerDoorAlpha: 1,        // v0.9.7：房间里的门不再半透明，而是完整绘制后整体压暗
+  innerDoorDarkness: 0.46,   // 房间里的门/门框压暗程度，避免和外层门抢层级
+  ghostHeight: 0.42,         // v0.9.8：鬼和人物统一高度范围
+  personHeight: 0.42,        // v0.9.8：人物和鬼保持相近尺寸
+  characterBottom: 0.965,    // v0.9.8：统一贴地，避免悬浮
+  transitionClipPadding: 8   // v0.9.8：转场缩放裁切边界，防止盖住UI
 }
 
 // 临时测试开关：先隐藏墙壁和地板，只保留黑底、内部门、外门框、外门。
@@ -147,6 +149,8 @@ let sealSuccess = false
 let sealCountRequired = 0
 let sealCountDone = 0
 let sealEyeTriggered = false
+let sealResolveStart = 0
+const SEAL_RESOLVE_DURATION = 520
 
 let enterAnim = 0
 let enteringRoom = false
@@ -683,6 +687,7 @@ function newRoom() {
   isChangingRoom = false
   sealAnim = 1
   sealSuccess = false
+  sealResolveStart = 0
   enterAnim = 0
   enteringRoom = false
 
@@ -709,6 +714,7 @@ function finishNextRoom() {
 function nextRoomAfterSeal() {
   if (isChangingRoom) return
   isChangingRoom = true
+  sealResolveStart = performance.now()
 
   room++
   if (room > best) {
@@ -1188,23 +1194,90 @@ function getInnerFrameRect(openRect, scaleBoost = 1) {
   }
 }
 
-function drawClosedDoorSet(frameRect, alpha = 1) {
+function drawProceduralDoor(open, alpha = 1, darkness = 0) {
+  // v0.9.7：不再直接拉伸原始「门.png」。
+  // 原图比例和门洞适配度较低，所以这里按同一风格复刻一扇暗色竖纹推拉门，
+  // 尺寸永远精准填满门洞，避免外门/内门错位。
+  ctx.save()
+  ctx.globalAlpha = alpha
+
+  const g = ctx.createLinearGradient(open.x, open.y, open.x + open.w, open.y)
+  g.addColorStop(0, '#17191b')
+  g.addColorStop(0.48, '#4b4f54')
+  g.addColorStop(1, '#151719')
+  ctx.fillStyle = g
+  ctx.fillRect(open.x, open.y, open.w, open.h)
+
+  // 细竖纹，呼应你上传门图的金属/木纹质感。
+  const stripeCount = Math.max(22, Math.floor(open.w / 7))
+  for (let i = 0; i <= stripeCount; i++) {
+    const x = open.x + (i / stripeCount) * open.w
+    ctx.strokeStyle = i % 2 === 0 ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.34)'
+    ctx.lineWidth = Math.max(1, open.w * 0.0022)
+    ctx.beginPath()
+    ctx.moveTo(x, open.y)
+    ctx.lineTo(x, open.y + open.h)
+    ctx.stroke()
+  }
+
+  // 轻微中心高光，避免纯平。
+  const hg = ctx.createRadialGradient(
+    open.x + open.w * 0.52, open.y + open.h * 0.22, open.w * 0.03,
+    open.x + open.w * 0.52, open.y + open.h * 0.22, open.w * 0.78
+  )
+  hg.addColorStop(0, 'rgba(255,255,255,0.18)')
+  hg.addColorStop(0.42, 'rgba(255,255,255,0.05)')
+  hg.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = hg
+  ctx.fillRect(open.x, open.y, open.w, open.h)
+
+  // 边缘压暗。
+  ctx.fillStyle = 'rgba(0,0,0,0.32)'
+  ctx.fillRect(open.x, open.y, open.w * 0.025, open.h)
+  ctx.fillRect(open.x + open.w * 0.975, open.y, open.w * 0.025, open.h)
+
+  // 右侧门把手。
+  const hx = open.x + open.w * 0.84
+  const hy = open.y + open.h * 0.43
+  const hw = Math.max(12, open.w * 0.055)
+  const hh = open.h * 0.24
+  ctx.strokeStyle = 'rgba(230,230,220,0.62)'
+  ctx.lineWidth = Math.max(3, open.w * 0.01)
+  roundRect(hx - hw / 2, hy, hw, hh, hw / 2)
+  ctx.stroke()
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+  ctx.lineWidth = Math.max(1.5, open.w * 0.004)
+  roundRect(hx - hw / 2, hy, hw, hh, hw / 2)
+  ctx.stroke()
+
+  if (darkness > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${darkness})`
+    ctx.fillRect(open.x, open.y, open.w, open.h)
+  }
+
+  ctx.restore()
+}
+
+function drawClosedDoorSet(frameRect, alpha = 1, darkness = 0) {
   // 关键：小门和大门都使用同一套门框开口比例。
-  // 这样过渡时只需要放大/移动门框矩形，里面的门会自然跟着对齐，
-  // 最后一帧可以和外层门完全重叠。
   const open = getOpeningRect(frameRect)
 
   ctx.save()
   ctx.globalAlpha = alpha
-  drawImageCover(ASSETS.door, open.x, open.y, open.w, open.h)
+  drawProceduralDoor(open, 1, darkness)
   ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+  if (darkness > 0) {
+    // 门框也跟着压暗，但不透明。
+    ctx.fillStyle = `rgba(0,0,0,${darkness * 0.72})`
+    ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+  }
   ctx.restore()
 }
 
 function drawInnerDoorSet(openRect, scaleBoost = 1, alpha = ART_LAYOUT.innerDoorAlpha) {
   const innerFrame = getInnerFrameRect(openRect, scaleBoost)
-  // 缩小的门 / 门框比外层更暗，保持“深处还有一扇门”的空间感。
-  drawClosedDoorSet(innerFrame, alpha)
+  // v0.9.7：内部门不是半透明，而是完整门 + 压暗。
+  drawClosedDoorSet(innerFrame, alpha, ART_LAYOUT.innerDoorDarkness)
 }
 
 function getInnerDoorRects(openRect) {
@@ -1237,9 +1310,9 @@ function drawExpandingInnerDoor(frameRect, openRect, t) {
   // 这样它会像一个整体被放大、平移，最后精准贴到外部门的位置。
   const frame = lerpRect(start.frame, frameRect, morph)
 
-  // 不再让门在过渡里明显变亮，只做位置和尺寸变化，避免闪一下。
-  const alpha = lerp(ART_LAYOUT.innerDoorAlpha, 0.82, morph)
-  drawClosedDoorSet(frame, alpha)
+  // v0.9.7：过渡中用压暗程度逐步减少来变亮，不再用半透明。
+  const darkness = lerp(ART_LAYOUT.innerDoorDarkness, 0, morph)
+  drawClosedDoorSet(frame, 1, darkness)
 }
 
 function drawRoomContent(openRect) {
@@ -1270,16 +1343,15 @@ function drawRoomContent(openRect) {
 }
 
 function drawGhostImage(img, openRect, index = 0, total = 1) {
-  const pressureScale = 1 + danger * 0.18
-  const alpha = Math.min(1, 0.42 + danger * 0.58)
-  // 多鬼房：几只鬼同时在门后，但分散站位，避免完全重叠。
-  const offsets = total === 1 ? [0] : total === 2 ? [-0.13, 0.13] : [-0.20, 0, 0.20]
-  const sizeFactor = total === 1 ? 1 : total === 2 ? 0.86 : 0.76
-  // 门是向左滑开，最先露出的是门洞右侧；整体略微靠右，保证一开缝就能看到一部分。
-  const centerX = openRect.x + openRect.w * (0.66 + (offsets[index] || 0))
+  const pressureScale = 1 + danger * 0.10
+  const alpha = Math.min(1, 0.56 + danger * 0.44)
+  // v0.9.8：所有角色以同一地面线落地；单只鬼/人物用相近高度，多鬼时才略微缩小以避免重叠。
+  const offsets = total === 1 ? [0] : total === 2 ? [-0.14, 0.14] : [-0.22, 0, 0.22]
+  const sizeFactor = total === 1 ? 1 : total === 2 ? 0.82 : 0.70
+  const centerX = openRect.x + openRect.w * (0.60 + (offsets[index] || 0))
   const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * 0.82 * pressureScale * sizeFactor
-  const maxH = openRect.h * (ART_LAYOUT.ghostHeight * 1.12) * pressureScale * sizeFactor
+  const maxW = openRect.w * 0.86 * pressureScale * sizeFactor
+  const maxH = openRect.h * ART_LAYOUT.ghostHeight * pressureScale * sizeFactor
 
   ctx.save()
   ctx.globalAlpha = alpha
@@ -1289,17 +1361,17 @@ function drawGhostImage(img, openRect, index = 0, total = 1) {
   if (danger > 0.6) {
     ctx.fillStyle = `rgba(255,255,255,${(danger - 0.6) * 0.35})`
     ctx.beginPath()
-    ctx.arc(centerX, openRect.y + openRect.h * 0.45, openRect.w * (0.18 + danger * 0.08), 0, Math.PI * 2)
+    ctx.arc(centerX, openRect.y + openRect.h * 0.52, openRect.w * (0.16 + danger * 0.07), 0, Math.PI * 2)
     ctx.fill()
   }
 }
 
 function drawPersonImage(img, openRect) {
-  // 人物也略微靠右，避免门打开一小段时仍完全看不到。
-  const centerX = openRect.x + openRect.w * 0.66
+  // v0.9.8：人物和妖怪共用同一地面线与相近尺寸，避免人物漂浮或大小差距过大。
+  const centerX = openRect.x + openRect.w * 0.60
   const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * 0.72
-  const maxH = openRect.h * (ART_LAYOUT.personHeight * 1.08)
+  const maxW = openRect.w * 0.86
+  const maxH = openRect.h * ART_LAYOUT.personHeight
   drawImageContainBottom(img, centerX, bottomY, maxW, maxH)
 }
 
@@ -1343,7 +1415,10 @@ function drawArtRoom(frameRect, options = {}) {
     const slide = doorOpen * open.w * ART_LAYOUT.largeDoorSlide
     const doorX = open.x - slide
     const doorAlpha = ghostEyeActive() ? 0.6 : 1
-    drawImageCoverAlpha(ASSETS.door, doorX, open.y, open.w, open.h, doorAlpha)
+    ctx.save()
+    ctx.globalAlpha = doorAlpha
+    drawProceduralDoor({ x: doorX, y: open.y, w: open.w, h: open.h }, 1, 0)
+    ctx.restore()
   }
 }
 
@@ -1472,12 +1547,41 @@ function drawStaticSeal(open, index, total) {
 function drawSealOnDoor(frameRect) {
   const open = getOpeningRect(frameRect)
 
-  // 已贴好的符：多鬼房会保留多张符在门上。
+  // v0.9.8：封印完成后不硬留符咒，门框周围亮黄光，符咒逐渐透明消失，过渡到下一门更自然。
+  const resolving = sealResolveStart > 0
+  const resolveT = resolving ? clamp01((performance.now() - sealResolveStart) / SEAL_RESOLVE_DURATION) : 0
+  const resolveFade = resolving ? (1 - smoothstep(resolveT)) : 1
+
+  if (resolving) {
+    const glow = resolveFade
+    ctx.save()
+    ctx.shadowColor = 'rgba(255,210,70,0.95)'
+    ctx.shadowBlur = 28 * glow
+    ctx.strokeStyle = `rgba(255,220,90,${0.72 * glow})`
+    ctx.lineWidth = 8
+    roundRect(frameRect.x + 6, frameRect.y + 6, frameRect.w - 12, frameRect.h - 12, 8)
+    ctx.stroke()
+    ctx.restore()
+
+    const rg = ctx.createRadialGradient(
+      frameRect.x + frameRect.w / 2, frameRect.y + frameRect.h * 0.52, open.w * 0.08,
+      frameRect.x + frameRect.w / 2, frameRect.y + frameRect.h * 0.52, open.w * 0.68
+    )
+    rg.addColorStop(0, `rgba(255,210,60,${0.18 * glow})`)
+    rg.addColorStop(1, 'rgba(255,210,60,0)')
+    ctx.fillStyle = rg
+    ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+  }
+
+  // 已贴好的符：多鬼房会保留多张符在门上；封印完成时随黄光渐隐。
   const movingOne = sealSuccess && sealAnim < 1 ? 1 : 0
   const staticCount = Math.max(0, sealCountDone - movingOne)
+  ctx.save()
+  ctx.globalAlpha = resolveFade
   for (let i = 0; i < staticCount; i++) {
     drawStaticSeal(open, i, Math.max(sealCountRequired, staticCount))
   }
+  ctx.restore()
 
   if (!sealSuccess || sealAnim >= 1) return
 
@@ -1497,21 +1601,10 @@ function drawSealOnDoor(frameRect) {
   const h = 126 * scale
 
   ctx.save()
+  ctx.globalAlpha = resolveFade
   ctx.translate(x, y)
   if (t > 0.82) ctx.scale(1.08, 0.94)
-
-  ctx.fillStyle = '#e5c76c'
-  ctx.fillRect(-w / 2, -h / 2, w, h)
-
-  ctx.strokeStyle = '#9f2020'
-  ctx.lineWidth = 3
-  ctx.strokeRect(-w / 2 + 4, -h / 2 + 4, w - 8, h - 8)
-
-  ctx.fillStyle = '#9f2020'
-  ctx.font = `${Math.floor(28 * scale)}px sans-serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('封', 0, 0)
+  drawTalismanImage(0, 0, w, h, 0, 1)
   ctx.restore()
 }
 
@@ -1522,10 +1615,7 @@ function drawEnterTransition(baseFrameRect) {
   const open = getOpeningRect(baseFrameRect)
   const inner = getInnerDoorRects(open).frame
 
-  // 更快但仍然同步的“无限空间”转场：
-  // 不是只让里面的小门自己放大，而是把整个房间画面当成镜头推进。
-  // 计算一个变换，让“房间里的小门框”在最后一帧刚好移动并放大到“外层大门框”的位置。
-  // 因为整个画面一起变换，所以小门、大门、门框的放大速度是同步的，玩家会感觉自己真的靠近了下一扇门。
+  // v0.9.8：转场缩放必须有裁切边界。整个缩放只发生在外层门框区域内，避免放大后的门/房间压到顶部UI。
   const morph = easeInOutCubic(clamp01((t - 0.02) / 0.96))
   const targetScale = baseFrameRect.h / inner.h
   const scale = lerp(1, targetScale, morph)
@@ -1534,36 +1624,41 @@ function drawEnterTransition(baseFrameRect) {
   const tx = lerp(0, targetTx, morph)
   const ty = lerp(0, targetTy, morph)
 
-  // 旧空间轻微压暗，转场更稳，不会突然闪一下。
+  const pad = ART_LAYOUT.transitionClipPadding || 0
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(baseFrameRect.x - pad, baseFrameRect.y - pad, baseFrameRect.w + pad * 2, baseFrameRect.h + pad * 2)
+  ctx.clip()
+
+  // 缩放区内轻微压暗，避免突然闪；不会覆盖UI。
   const roomDim = smoothstep(t / 0.65)
   if (roomDim > 0) {
-    ctx.fillStyle = `rgba(0,0,0,${0.10 * roomDim})`
-    ctx.fillRect(0, 0, W, H)
+    ctx.fillStyle = `rgba(0,0,0,${0.08 * roomDim})`
+    ctx.fillRect(baseFrameRect.x - pad, baseFrameRect.y - pad, baseFrameRect.w + pad * 2, baseFrameRect.h + pad * 2)
   }
-
-  const transitionDoorAlpha = lerp(ART_LAYOUT.innerDoorAlpha, 1, smoothstep((morph - 0.08) / 0.92))
 
   ctx.save()
   ctx.setTransform(DPR * scale, 0, 0, DPR * scale, DPR * tx, DPR * ty)
   drawArtRoom(baseFrameRect, {
     includeLargeDoor: true,
     includeContent: true,
-    innerDoorAlpha: transitionDoorAlpha
+    innerDoorAlpha: 1
   })
   ctx.restore()
 
-  // 末尾只加很轻的暗角，避免下一间 reset 时有硬切感。
+  // 末尾暗角也限制在门框内部。
   const endVignette = smoothstep((t - 0.82) / 0.18)
   if (endVignette > 0) {
     const g = ctx.createRadialGradient(
       W / 2, open.y + open.h * 0.45, open.w * 0.36,
       W / 2, open.y + open.h * 0.45, Math.max(W, H) * 0.78
     )
-    g.addColorStop(0, `rgba(0,0,0,0)`)
-    g.addColorStop(1, `rgba(0,0,0,${0.20 * endVignette})`)
+    g.addColorStop(0, 'rgba(0,0,0,0)')
+    g.addColorStop(1, `rgba(0,0,0,${0.16 * endVignette})`)
     ctx.fillStyle = g
-    ctx.fillRect(0, 0, W, H)
+    ctx.fillRect(baseFrameRect.x - pad, baseFrameRect.y - pad, baseFrameRect.w + pad * 2, baseFrameRect.h + pad * 2)
   }
+  ctx.restore()
 }
 
 function drawPlainMenuButton(rect, title, subtitle = '', accent = '#d8bd75') {
