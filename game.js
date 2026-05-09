@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.23';
+  const VERSION = 'v0.11.24';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -1309,9 +1309,7 @@
     const l = state.layout;
     const t = easeInOut(clamp(state.transition, 0, 1));
 
-    // 进入下一间的正确逻辑：不是把大门插值成小门，也不是让画面先缩小；
-    // 而是把“当前整套空间”以小门为锚点同步推进放大。
-    // 这样外层墙/门会一起变大并离开视野，内层墙/门会同步放大到大门位置。
+    // 进入下一间：当前空间整体推进放大；地砖不空掉，始终使用“门内房间”的地砖接上。
     const targetScale = l.bigDoor.w / l.smallDoor.w;
     const s = lerp(1, targetScale, t);
     const tx = lerp(0, l.bigDoor.x - l.smallDoor.x * targetScale, t);
@@ -1331,16 +1329,21 @@
     const innerWall = tr(l.smallWall);
     const innerHole = tr(l.smallHole);
     const innerDoor = tr(l.smallDoor);
+    const nextRoom = makeNestedRoomFromDoor(innerDoor);
 
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, l.topH, l.w, l.h - l.topH);
     ctx.clip();
 
-    // 地板不参与放大消失：先画一层稳定地面，转场中一直保留。
-    drawSceneGround(l.bigHole, l.smallWall, 1);
+    // 这里不再画一张“空白地板”，而是直接画正在被放大的房间内部地砖。
+    // 转场结束后，这组地砖自然成为下一间的地砖，不会突然消失。
+    drawSceneGround(innerHole, nextRoom.wall, 1);
+    drawSmallWallAndDoor(nextRoom.wall, nextRoom.hole, nextRoom.door, 0.96);
+    drawInteriorPerspective(innerHole, nextRoom.wall);
+
+    // 新的前层墙门同步放大到外层位置。
     drawSmallWallAndDoor(innerWall, innerHole, innerDoor, 1);
-    drawInteriorPerspective(frontHole, innerWall);
 
     if (state.transitionFadeContent) {
       ctx.save();
@@ -1349,12 +1352,29 @@
       ctx.restore();
     }
 
+    // 旧的外墙和外门仍然同步放大离开视野，保证不是“先缩小再放大”。
     drawBigWall(frontHole);
     drawDoorPanel(frontDoor, state.transitionDoor, { big: true });
     drawDoorBaseLine(frontDoor, state.transitionDoor, 1);
-    // 再补一条稳定的最终地板线，避免转场末端地面跟着放大消失。
-    drawDoorBaseLine(l.bigDoor, 0, 1);
     ctx.restore();
+  }
+
+  function makeNestedRoomFromDoor(door) {
+    const smallScale = 0.36;
+    const nestedDoor = {
+      w: door.w * smallScale,
+      h: door.h * smallScale,
+      x: door.x + (door.w - door.w * smallScale) / 2,
+      y: door.y + door.h * 0.34
+    };
+    const nestedHole = { ...nestedDoor };
+    const nestedWall = {
+      x: nestedHole.x - nestedHole.w * 0.64,
+      y: nestedHole.y - nestedHole.h * 0.48,
+      w: nestedHole.w * 2.28,
+      h: nestedHole.h * 1.56
+    };
+    return { wall: nestedWall, hole: nestedHole, door: nestedDoor };
   }
 
   function rectLerp(a, b, t) {
@@ -1435,10 +1455,68 @@
     ctx.lineTo(frontR.x, frontR.y);
     ctx.stroke();
 
-    // 地砖网格：横线和纵线都从同一个四边形地面计算，避免不对齐。
-    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
-    ctx.lineWidth = 1.2;
+    ctx.restore();
+  }
 
+  function drawSceneGround(frontHole, innerWall, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const l = state.layout;
+    const frontY = frontHole.y + frontHole.h;
+    const backY = innerWall.y + innerWall.h;
+    const floorBottom = Math.min(l.h - l.bottomH * 0.20, Math.max(frontY, backY) + l.gameH * 0.18);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-l.w, l.topH, l.w * 3, l.h);
+
+    // 门前地面轻阴影，避免滑门像悬浮。
+    const shadow = ctx.createLinearGradient(0, frontY, 0, floorBottom);
+    shadow.addColorStop(0, 'rgba(0,0,0,0.08)');
+    shadow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = shadow;
+    ctx.fillRect(frontHole.x - frontHole.w * 0.18, frontY - 1, frontHole.w * 1.36, Math.max(12, floorBottom - frontY));
+
+    drawFloorTileGrid(frontHole, innerWall, alpha);
+    ctx.restore();
+  }
+
+  function drawFloorTileGrid(frontHole, innerWall, alpha = 1) {
+    const frontL = { x: frontHole.x, y: frontHole.y + frontHole.h };
+    const frontR = { x: frontHole.x + frontHole.w, y: frontHole.y + frontHole.h };
+    const backL = { x: innerWall.x, y: innerWall.y + innerWall.h };
+    const backR = { x: innerWall.x + innerWall.w, y: innerWall.y + innerWall.h };
+
+    function interp(p, q, t) {
+      return { x: lerp(p.x, q.x, t), y: lerp(p.y, q.y, t) };
+    }
+    function floorPoint(xFrac, depth) {
+      const left = interp(frontL, backL, depth);
+      const right = interp(frontR, backR, depth);
+      return interp(left, right, xFrac);
+    }
+    function depthEase(i, total) {
+      const t = i / total;
+      return 1 - Math.pow(1 - t, 1.62);
+    }
+
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 前门与后墙的落地线。
+    ctx.strokeStyle = 'rgba(0,0,0,0.58)';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(frontHole.x + 1, frontHole.y + frontHole.h);
+    ctx.lineTo(frontHole.x + frontHole.w - 1, frontHole.y + frontHole.h);
+    ctx.moveTo(innerWall.x, innerWall.y + innerWall.h);
+    ctx.lineTo(innerWall.x + innerWall.w, innerWall.y + innerWall.h);
+    ctx.stroke();
+
+    // 纵向砖缝：从前门底部向后墙收束。
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    ctx.lineWidth = 1.1;
     for (let i = 1; i <= 6; i++) {
       const xFrac = i / 7;
       const p0 = floorPoint(xFrac, 0);
@@ -1449,6 +1527,7 @@
       ctx.stroke();
     }
 
+    // 横向砖缝：和纵向砖缝共用同一个地面四边形，不会再错位。
     for (let i = 1; i <= 6; i++) {
       const d = depthEase(i, 7);
       const left = floorPoint(0, d);
@@ -1458,31 +1537,6 @@
       ctx.lineTo(right.x, right.y);
       ctx.stroke();
     }
-
-    ctx.restore();
-  }
-
-  function drawSceneGround(frontHole, innerWall, alpha = 1) {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    const floorTop = frontHole.y + frontHole.h;
-    const floorBottom = Math.min(state.layout.h - state.layout.bottomH * 0.35, floorTop + state.layout.gameH * 0.20);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(-state.layout.w, state.layout.topH, state.layout.w * 3, state.layout.h);
-
-    const shadow = ctx.createLinearGradient(0, floorTop, 0, floorBottom);
-    shadow.addColorStop(0, 'rgba(0,0,0,0.08)');
-    shadow.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = shadow;
-    ctx.fillRect(frontHole.x - frontHole.w * 0.18, floorTop - 1, frontHole.w * 1.36, floorBottom - floorTop);
-
-    // 最外门的落地线
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.moveTo(frontHole.x - frontHole.w * 0.12, floorTop);
-    ctx.lineTo(frontHole.x + frontHole.w * 1.12, floorTop);
-    ctx.stroke();
     ctx.restore();
   }
 
