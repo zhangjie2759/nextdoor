@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.17';
+  const VERSION = 'v0.11.18';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -117,34 +117,83 @@
     } catch (e) {}
   }
 
-  function loadImageWithFallback(file) {
-    const candidates = [];
-    ASSET_BASES.forEach(base => {
-      const raw = base + file;
-      const encoded = encodeURI(raw);
-      candidates.push(raw);
-      if (encoded !== raw) candidates.push(encoded);
-    });
-    let index = 0;
-    const img = new Image();
-    img.decoding = 'async';
-    img.onload = () => { assets[file] = img; };
-    img.onerror = () => {
-      index += 1;
-      if (index < candidates.length) {
-        img.src = candidates[index];
-      } else {
-        assets[file] = null;
-      }
+  const assetCache = {};
+
+  function assetCandidateUrls(file) {
+    const urls = [];
+    const push = src => {
+      if (!src || urls.includes(src)) return;
+      urls.push(src);
+      const encoded = encodeURI(src);
+      if (encoded !== src && !urls.includes(encoded)) urls.push(encoded);
     };
-    img.src = candidates[index];
-    assets[file] = img;
+    // 先并行尝试最常用的资源位置，避免一层层 404 导致看起来“加载很慢”。
+    ASSET_BASES.forEach(base => push(base + file));
+    return urls;
+  }
+
+  function loadImageWithFallback(file) {
+    const existing = assetCache[file];
+    if (existing && existing.started) return existing;
+
+    const record = {
+      started: true,
+      loaded: false,
+      failed: false,
+      img: null,
+      pending: 0,
+      src: ''
+    };
+    assetCache[file] = record;
+
+    const candidates = assetCandidateUrls(file);
+    record.pending = candidates.length;
+
+    candidates.forEach(src => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => {
+        if (record.loaded) return;
+        record.loaded = true;
+        record.failed = false;
+        record.img = img;
+        record.src = src;
+        assets[file] = img;
+      };
+      img.onerror = () => {
+        record.pending -= 1;
+        if (record.pending <= 0 && !record.loaded) {
+          record.failed = true;
+          // 只标记失败，不阻止后续重新尝试。
+          assets[file] = null;
+        }
+      };
+      img.src = src;
+    });
+
+    return record;
   }
 
   function getAssetImage(file) {
-    const img = assets[file];
-    if (img && img.naturalWidth) return img;
-    if (img === null || img === undefined) loadImageWithFallback(file);
+    let record = assetCache[file];
+    if (!record || (!record.started && !record.loaded)) {
+      record = loadImageWithFallback(file);
+    }
+    if (record && record.loaded && record.img && record.img.complete && record.img.naturalWidth) {
+      return record.img;
+    }
+    const legacy = assets[file];
+    if (legacy && legacy.complete && legacy.naturalWidth) return legacy;
+
+    // 如果所有候选都失败，过一会儿允许重新尝试，避免 GitHub Pages / 缓存短暂异常后永久空掉。
+    if (record && record.failed && !record.retryAt) {
+      record.retryAt = state.t + 1.2;
+    }
+    if (record && record.failed && record.retryAt && state.t > record.retryAt) {
+      delete assetCache[file];
+      delete assets[file];
+      loadImageWithFallback(file);
+    }
     return null;
   }
 
@@ -1692,7 +1741,7 @@
   }
 
   function drawSealButton(r) {
-    const img = assets['封印按钮.png'];
+    const img = getAssetImage('封印按钮.png');
     ctx.save();
     if (img && img.complete && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
@@ -1804,7 +1853,7 @@
       const x = baseX + Math.sin(state.t * (0.8 + i * 0.06) + i) * 16;
       const y = baseY + Math.cos(state.t * (1.0 + i * 0.08) + i * 1.7) * 18;
       const size = Math.max(34, Math.min(58, l.w * (0.09 + (i % 3) * 0.012)));
-      const img = assets[GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]];
+      const img = getAssetImage(GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]);
       ctx.globalAlpha = 0.34 + Math.sin(state.t * 2 + i) * 0.08;
       if (img && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
