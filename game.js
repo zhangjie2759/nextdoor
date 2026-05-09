@@ -2,14 +2,14 @@
 // 保留：难度选择 / 门吸附 / 鬼速度逻辑 / 安全进入动画 / 封印逻辑
 // 新增：assets 目录图片图层结构，可直接替换 png
 // 更新：只抽取已加载的角色图片；无图片槽位不再使用临时鬼/临时人物；测试版隐藏墙壁和地板
-// 版本：v0.9.5
-// 本版更新：Boss战符咒直接贴在门板上，并绑定门板坐标跟随门移动
+// 版本：v0.9.6
+// 本版更新：同步调用根目录新素材；旧 根目录新素材 路径全部停用
 
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.9.5'
-const GAME_VERSION_NOTE = 'Boss门板贴符版'
+const GAME_VERSION = 'v0.9.6'
+const GAME_VERSION_NOTE = '新素材同步版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -35,32 +35,39 @@ const DIFFICULTY = {
 }
 
 // ===== 图片资源 =====
-// 替换图片时，保持下面文件名不变即可。
+// v0.9.6：改为直接调用你上传在仓库根目录的素材，不再调用 根目录新素材 里的旧素材。
 const ASSET_PATHS = {
-  frame: 'assets/frame.png',       // 门框，已处理成中间透明
-  frameRaw: 'assets/frame_raw.png',// 原始门框，只用于菜单背景/备份
-  wall: 'assets/wall.png',         // 墙壁 / 深处空间
-  floor: 'assets/floor.png',       // 地板
-  door: 'assets/door.png'          // 最大门和缩小门都先复用这一张
+  frame: '门框.png',          // 外层 / 内层门框
+  frameRaw: '门框.png',       // 菜单背景备份
+  room: '房间内.png',         // 门后的房间空间
+  wall: '房间内.png',         // 兼容旧变量，不再调用旧 wall.png
+  floor: '房间内.png',        // 兼容旧变量，不再调用旧 floor.png
+  door: '门.png',             // 外层 / 内层滑动门
+  sealButton: '封印按钮.png'  // 封印按钮 / 符咒贴图
 }
 
 // ===== 角色资源槽位 =====
-// 你后面只要把透明 PNG 放进对应文件夹即可。
-// 鬼：assets/ghosts/一号鬼.png ... assets/ghosts/十二号鬼.png
-// 人物：assets/people/一号人物.png ... assets/people/十二号人物.png
-// 没有放图片的槽位不会报错，但不会参与随机；放几张就只从这几张里抽。
-const CN_NUMS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二']
+// v0.9.6：根据你当前上传的根目录图片建立映射。
+// 鬼图鉴按首批山海经阵容排序；缺图不会报错，缺图槽位不会参与随机。
+const GHOST_SLOTS = [
+  { id: 1, name: '猼訑', src: '猼訑.png' },
+  { id: 2, name: '赤鱬', src: '赤鱬.png' },
+  { id: 3, name: '当康', src: '当康.png' },
+  { id: 4, name: '混沌', src: '混沌.png' },
+  { id: 5, name: '九尾狐', src: '九尾狐.png' },
+  { id: 6, name: '夔牛', src: '夔牛.png' },
+  { id: 7, name: '麒麟', src: '麒麟.png' },
+  { id: 8, name: '穷奇', src: '穷奇.png' },
+  { id: 9, name: '饕餮', src: '饕餮.png' },
+  { id: 10, name: '狰', src: '狰.png' },
+  { id: 11, name: '烛阴', src: '烛阴.png' }
+]
 
-const GHOST_SLOTS = CN_NUMS.map((n, i) => ({
+// 人物素材使用你上传的 1号人物.png ～ 10号人物.png。
+const PERSON_SLOTS = Array.from({ length: 10 }, (_, i) => ({
   id: i + 1,
-  name: `${n}号鬼`,
-  src: `assets/ghosts/${n}号鬼.png`
-}))
-
-const PERSON_SLOTS = CN_NUMS.map((n, i) => ({
-  id: i + 1,
-  name: `${n}号人物`,
-  src: `assets/people/${n}号人物.png`
+  name: `${i + 1}号人物`,
+  src: `${i + 1}号人物.png`
 }))
 
 const ASSETS = {}
@@ -106,7 +113,7 @@ const ART_LAYOUT = {
 
 // 临时测试开关：先隐藏墙壁和地板，只保留黑底、内部门、外门框、外门。
 // 后面想恢复墙壁地板，改成 true 即可。
-const SHOW_WALL_AND_FLOOR = false
+const SHOW_WALL_AND_FLOOR = true
 
 let room = 1
 let best = 1
@@ -1313,26 +1320,16 @@ function drawArtRoom(frameRect, options = {}) {
     ctx.fillRect(open.x, open.y, open.w, open.h)
 
     if (SHOW_WALL_AND_FLOOR) {
-      // 6/5. 缩小门 + 缩小门框
-      // 先画一层深处门，再由墙壁/地板压出空间层次。
-      drawInnerDoorSet(open, depthScale, innerDoorAlpha)
-
-      // 4. 墙壁：房间内部墙壁比外层更暗。
-      drawImageCover(ASSETS.wall, open.x, open.y, open.w, open.h)
+      // v0.9.6：门后空间改用你上传的「房间内.png」。
+      // 不再调用旧的 wall.png / floor.png，也不再把地板和墙壁拆成旧图层。
+      drawImageCover(ASSETS.room || ASSETS.wall, open.x, open.y, open.w, open.h)
       if (ART_LAYOUT.roomWallDarkness > 0) {
-        const floorYForDark = open.y + open.h * ART_LAYOUT.floorStart
         ctx.fillStyle = `rgba(0,0,0,${ART_LAYOUT.roomWallDarkness})`
-        ctx.fillRect(open.x, open.y, open.w, floorYForDark - open.y)
+        ctx.fillRect(open.x, open.y, open.w, open.h)
       }
-
-      // 3. 地板，压在墙壁底部
-      const floorY = open.y + open.h * ART_LAYOUT.floorStart
-      const floorH = open.h * (1 - ART_LAYOUT.floorStart)
-      drawImageCover(ASSETS.floor, open.x, floorY, open.w, floorH)
     }
 
-    // 测试版：不管鬼 / 人 / 空房间，背景只保留黑底里的深处小门。
-    // 这样可以先判断“无限门”的转场和构图是否成立。
+    // 深处小门仍然保留，用于“下一间”的无限门转场。
     drawInnerDoorSet(open, depthScale, innerDoorAlpha)
 
     if (includeContent) drawRoomContent(open)
@@ -1422,6 +1419,11 @@ function drawSealButton() {
   const canSeal = doorOpen <= 0.05 && hasSeenContent && !isChangingRoom
   if (!canSeal) return
 
+  if (ASSETS.sealButton) {
+    drawImageContain(ASSETS.sealButton, sealButton.x, sealButton.y, sealButton.w, sealButton.h)
+    return
+  }
+
   ctx.fillStyle = '#8b1e1e'
   roundRect(sealButton.x, sealButton.y, sealButton.w, sealButton.h, 12)
   ctx.fill()
@@ -1435,31 +1437,36 @@ function drawSealButton() {
   ctx.font = '24px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
-  // 按钮文字永远相同，避免多鬼房提前剧透需要封印几次。
   ctx.fillText('封 印', W / 2, sealButton.y + 37)
+}
+
+function drawTalismanImage(x, y, w, h, rot = 0, alpha = 1) {
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.translate(x, y)
+  ctx.rotate(rot)
+  if (ASSETS.sealButton) {
+    drawImageContain(ASSETS.sealButton, -w / 2, -h / 2, w, h)
+  } else {
+    ctx.fillStyle = '#e5c76c'
+    ctx.fillRect(-w / 2, -h / 2, w, h)
+    ctx.strokeStyle = '#9f2020'
+    ctx.lineWidth = 2
+    ctx.strokeRect(-w / 2 + 4, -h / 2 + 4, w - 8, h - 8)
+    ctx.fillStyle = '#9f2020'
+    ctx.font = '24px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('封', 0, 0)
+  }
+  ctx.restore()
 }
 
 function drawStaticSeal(open, index, total) {
   const cols = total <= 1 ? [0.52] : total === 2 ? [0.43, 0.61] : [0.38, 0.52, 0.66]
   const x = open.x + open.w * (cols[index] || 0.52)
   const y = open.y + open.h * (0.43 + (index % 2) * 0.08)
-  const w = 42
-  const h = 98
-
-  ctx.save()
-  ctx.translate(x, y)
-  ctx.rotate((index - 1) * 0.06)
-  ctx.fillStyle = '#e5c76c'
-  ctx.fillRect(-w / 2, -h / 2, w, h)
-  ctx.strokeStyle = '#9f2020'
-  ctx.lineWidth = 2
-  ctx.strokeRect(-w / 2 + 4, -h / 2 + 4, w - 8, h - 8)
-  ctx.fillStyle = '#9f2020'
-  ctx.font = '24px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('封', 0, 0)
-  ctx.restore()
+  drawTalismanImage(x, y, 54, 112, (index - 1) * 0.06, 0.98)
 }
 
 function drawSealOnDoor(frameRect) {
@@ -1908,23 +1915,7 @@ function updateBossSealEffects() {
 }
 
 function drawBossTalisman(x, y, scale = 1, rot = 0, alpha = 1) {
-  const w = 30 * scale
-  const h = 72 * scale
-  ctx.save()
-  ctx.globalAlpha = alpha
-  ctx.translate(x, y)
-  ctx.rotate(rot)
-  ctx.fillStyle = '#e5c76c'
-  ctx.fillRect(-w / 2, -h / 2, w, h)
-  ctx.strokeStyle = '#9f2020'
-  ctx.lineWidth = Math.max(1, 2 * scale)
-  ctx.strokeRect(-w / 2 + 4 * scale, -h / 2 + 5 * scale, w - 8 * scale, h - 10 * scale)
-  ctx.fillStyle = '#9f2020'
-  ctx.font = `${Math.floor(22 * scale)}px sans-serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('封', 0, 0)
-  ctx.restore()
+  drawTalismanImage(x, y, 42 * scale, 92 * scale, rot, alpha)
 }
 
 function drawBossSealStickersOnDoor(doorRect) {
