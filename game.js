@@ -8,7 +8,7 @@
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.10.0'
+const GAME_VERSION = 'v0.10.1'
 const GAME_VERSION_NOTE = '图层顺序/门尺寸二次修正版'
 
 let W = window.innerWidth
@@ -114,6 +114,10 @@ const ART_LAYOUT = {
   roomWallDarkness: 0.16,   // 房间内图已偏暗，少压一点避免糊黑
   innerDoorAlpha: 1,
   innerDoorDarkness: 0.50,
+  // v0.10.1：补回 v0.10.0 遗漏的门板视觉尺寸参数。
+  // 缺少这两个值会导致 createLinearGradient 收到 NaN，游戏直接崩溃。
+  doorVisualTop: 0.055,
+  doorVisualScaleY: 0.90,
   ghostHeight: 0.39,        // v0.9.9：按新鬼素材缩小，避免顶天立地
   personHeight: 0.39,       // v0.9.9：人物与妖怪使用接近高度
   characterBottom: 0.905,   // v0.9.9：统一贴房间地面线，不再悬浮
@@ -1210,6 +1214,7 @@ function drawProceduralDoor(open, alpha = 1, darkness = 0) {
   // v0.9.7：不再直接拉伸原始「门.png」。
   // 原图比例和门洞适配度较低，所以这里按同一风格复刻一扇暗色竖纹推拉门，
   // 尺寸永远精准填满门洞，避免外门/内门错位。
+  if (!open || !Number.isFinite(open.x) || !Number.isFinite(open.y) || !Number.isFinite(open.w) || !Number.isFinite(open.h) || open.w <= 1 || open.h <= 1) return
   ctx.save()
   ctx.globalAlpha = alpha
 
@@ -1271,9 +1276,11 @@ function drawProceduralDoor(open, alpha = 1, darkness = 0) {
 }
 
 function getDoorVisualRect(open) {
-  // v0.10.0：门板不再占满整个门洞高度，避免视觉上过高。
-  const y = open.y + open.h * ART_LAYOUT.doorVisualTop
-  const h = open.h * ART_LAYOUT.doorVisualScaleY
+  // v0.10.1：门板不再占满整个门洞高度，同时加默认值防止配置遗漏导致 NaN。
+  const top = Number.isFinite(ART_LAYOUT.doorVisualTop) ? ART_LAYOUT.doorVisualTop : 0.055
+  const scaleY = Number.isFinite(ART_LAYOUT.doorVisualScaleY) ? ART_LAYOUT.doorVisualScaleY : 0.90
+  const y = open.y + open.h * top
+  const h = open.h * scaleY
   return { x: open.x, y, w: open.w, h }
 }
 
@@ -2151,7 +2158,7 @@ function drawBossBattle(frameRect) {
   }
 
   // 门缝红光必须在门上方再补一层，让“压不住”的感觉更明显。
-  if (doorOpen > 0.02) {
+  if (doorOpen > 0.02 && Number.isFinite(open.x) && Number.isFinite(open.y) && Number.isFinite(open.w) && Number.isFinite(open.h)) {
     const crackW = Math.max(3, open.w * Math.min(0.18, doorOpen * 0.18))
     const crackX = open.x + open.w * (1 - Math.min(0.98, doorOpen * ART_LAYOUT.largeDoorSlide))
     const crackAlpha = bossPhase === 'sealing' ? 0.35 + pressure * 0.45 : 0.22 + doorOpen * 0.32
