@@ -1,12 +1,12 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.0';
+  const VERSION = 'v0.11.1';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0110_save';
+  const STORAGE_KEY = 'next_room_v0111_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
@@ -137,43 +137,45 @@
     const gameBottom = h - bottomH;
     const gameH = gameBottom - gameTop;
 
-    const doorH = clamp(Math.min(gameH * 0.78, w * 1.18, 560), 330, 560);
-    const doorW = doorH * 0.58;
-    const doorX = (w - doorW) / 2;
-    const doorY = gameTop + Math.max(26, (gameH - doorH) * 0.44);
+    const outerH = clamp(Math.min(gameH * 0.82, w * 1.26, 620), 360, 620);
+    const outerW = outerH * 0.68;
+    const outerX = (w - outerW) / 2;
+    const outerY = gameTop + Math.max(18, (gameH - outerH) * 0.40);
 
-    const holePad = Math.max(12, doorW * 0.06);
-    const bigDoor = { x: doorX, y: doorY, w: doorW, h: doorH };
-    const bigHole = {
-      x: doorX - holePad,
-      y: doorY - holePad,
-      w: doorW + holePad * 2,
-      h: doorH + holePad * 2
+    const frameThickness = clamp(outerW * 0.048, 10, 18);
+    const panelInset = Math.max(4, frameThickness * 0.38);
+    const bigHole = { x: outerX, y: outerY, w: outerW, h: outerH, frameThickness };
+    const bigDoor = {
+      x: outerX + panelInset,
+      y: outerY + panelInset,
+      w: outerW - panelInset * 2,
+      h: outerH - panelInset * 2
     };
 
     const smallScale = 0.36;
+    const smallOuterW = outerW * smallScale;
+    const smallOuterH = outerH * smallScale;
+    const smallX = (w - smallOuterW) / 2;
+    const smallY = outerY + outerH * 0.21;
+    const smallFrameThickness = Math.max(4, frameThickness * smallScale);
+    const smallPanelInset = Math.max(2, panelInset * smallScale);
+    const smallHole = { x: smallX, y: smallY, w: smallOuterW, h: smallOuterH, frameThickness: smallFrameThickness };
     const smallDoor = {
-      w: doorW * smallScale,
-      h: doorH * smallScale,
-      x: (w - doorW * smallScale) / 2,
-      y: doorY + doorH * 0.20
-    };
-    const smallPad = holePad * smallScale;
-    const smallHole = {
-      x: smallDoor.x - smallPad,
-      y: smallDoor.y - smallPad,
-      w: smallDoor.w + smallPad * 2,
-      h: smallDoor.h + smallPad * 2
+      x: smallX + smallPanelInset,
+      y: smallY + smallPanelInset,
+      w: smallOuterW - smallPanelInset * 2,
+      h: smallOuterH - smallPanelInset * 2
     };
     const smallWall = {
-      x: smallHole.x - smallDoor.w * 0.38,
-      y: smallHole.y - smallDoor.h * 0.14,
-      w: smallHole.w + smallDoor.w * 0.76,
-      h: smallHole.h + smallDoor.h * 0.24
+      x: smallHole.x - smallOuterW * 0.42,
+      y: smallHole.y - smallOuterH * 0.12,
+      w: smallHole.w + smallOuterW * 0.84,
+      h: smallHole.h + smallOuterH * 0.24
     };
 
     return {
       w, h, topH, bottomH, gameTop, gameBottom, gameH,
+      frameThickness,
       bigDoor, bigHole, smallDoor, smallHole, smallWall,
       home: { x: 10, y: 16, w: 64, h: 36 },
       sealButton: { x: w / 2 - 76, y: h - 96, w: 152, h: 66 },
@@ -799,7 +801,6 @@
   }
 
   function drawGame() {
-    const l = state.layout;
     if (state.mode === 'transition') drawTransitionScene();
     else drawInfinityScene();
     drawTopUI();
@@ -813,9 +814,14 @@
     ctx.beginPath();
     ctx.rect(0, l.topH, l.w, l.h - l.topH);
     ctx.clip();
+    drawInfinityCore();
+    ctx.restore();
+  }
 
+  function drawInfinityCore() {
+    const l = state.layout;
     ctx.fillStyle = '#070707';
-    ctx.fillRect(0, l.topH, l.w, l.h - l.topH);
+    ctx.fillRect(-l.w * 1.2, l.topH - l.h * 0.2, l.w * 3.4, l.h * 2.4);
 
     drawSmallWallAndDoor(l.smallWall, l.smallHole, l.smallDoor);
     drawInteriorPerspective();
@@ -826,83 +832,37 @@
     drawDoorTalismans();
     drawSealSuccessGlow();
     drawDangerVignette();
-
-    ctx.restore();
   }
 
   function drawTransitionScene() {
     const l = state.layout;
     const t = easeInOut(clamp(state.transition, 0, 1));
+    const endScale = l.bigDoor.w / l.smallDoor.w;
+    const sx = lerp(1, endScale, t);
+    const sy = sx;
+    const txEnd = l.bigDoor.x - l.smallDoor.x * endScale;
+    const tyEnd = l.bigDoor.y - l.smallDoor.y * endScale;
+    const tx = lerp(0, txEnd, t);
+    const ty = lerp(0, tyEnd, t);
+
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, l.topH, l.w, l.h - l.topH);
     ctx.clip();
-
-    ctx.fillStyle = '#070707';
-    ctx.fillRect(0, l.topH, l.w, l.h - l.topH);
-
-    const hole = rectLerp(l.smallHole, l.bigHole, t);
-    const door = rectLerp(l.smallDoor, l.bigDoor, t);
-    const wall = {
-      x: 0,
-      y: l.topH,
-      w: l.w,
-      h: l.h - l.topH
-    };
-
-    drawPerspectiveFromHole(hole, door, t);
-    drawWallWithHole(wall, hole, { stroke: 5, fill: '#fffdf6' });
-    drawDoorPanel(door, 0, { big: false, alpha: 1 });
-
-    const innerScale = 0.36;
-    const innerDoor = {
-      w: door.w * innerScale,
-      h: door.h * innerScale,
-      x: door.x + door.w * (0.5 - innerScale / 2),
-      y: door.y + door.h * 0.21
-    };
-    const pad = Math.max(4, door.w * 0.022);
-    const innerHole = { x: innerDoor.x - pad, y: innerDoor.y - pad, w: innerDoor.w + pad * 2, h: innerDoor.h + pad * 2 };
-    const innerWall = { x: innerHole.x - innerDoor.w * 0.36, y: innerHole.y - innerDoor.h * 0.12, w: innerHole.w + innerDoor.w * 0.72, h: innerHole.h + innerDoor.h * 0.24 };
-    drawSmallWallAndDoor(innerWall, innerHole, innerDoor, 0.72);
-
+    ctx.translate(tx, ty);
+    ctx.scale(sx, sy);
+    drawInfinityCore();
     ctx.restore();
   }
 
-  function rectLerp(a, b, t) {
-    return {
-      x: lerp(a.x, b.x, t),
-      y: lerp(a.y, b.y, t),
-      w: lerp(a.w, b.w, t),
-      h: lerp(a.h, b.h, t)
-    };
-  }
-
-  function drawPerspectiveFromHole(hole, door, t) {
-    ctx.save();
-    ctx.globalAlpha = 0.45 + 0.25 * t;
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(hole.x, hole.y);
-    ctx.lineTo(door.x, door.y);
-    ctx.moveTo(hole.x + hole.w, hole.y);
-    ctx.lineTo(door.x + door.w, door.y);
-    ctx.moveTo(hole.x, hole.y + hole.h);
-    ctx.lineTo(door.x, door.y + door.h);
-    ctx.moveTo(hole.x + hole.w, hole.y + hole.h);
-    ctx.lineTo(door.x + door.w, door.y + door.h);
-    ctx.stroke();
-    ctx.restore();
-  }
 
   function drawInteriorPerspective() {
     const l = state.layout;
     const a = l.bigHole;
     const b = l.smallWall;
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.72)';
-    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = 'rgba(255,255,255,0.58)';
+    ctx.lineWidth = 2.6;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -914,18 +874,19 @@
     ctx.lineTo(b.x + b.w, b.y + b.h);
     ctx.stroke();
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.36)';
-    ctx.lineWidth = 1.5;
-    for (let i = 1; i < 4; i++) {
-      const k = i / 4;
-      const y1 = lerp(a.y + a.h, b.y + b.h, k);
-      const xL = lerp(a.x, b.x, k);
-      const xR = lerp(a.x + a.w, b.x + b.w, k);
-      ctx.beginPath();
-      ctx.moveTo(xL, y1);
-      ctx.lineTo(xR, y1);
-      ctx.stroke();
-    }
+    const floorTop = lerp(a.y + a.h, b.y + b.h, 0.16);
+    const floorBottom = a.y + a.h;
+    const g = ctx.createLinearGradient(0, floorTop, 0, floorBottom);
+    g.addColorStop(0, 'rgba(255,255,255,0.03)');
+    g.addColorStop(1, 'rgba(255,255,255,0.14)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y + a.h);
+    ctx.lineTo(a.x + a.w, a.y + a.h);
+    ctx.lineTo(b.x + b.w, b.y + b.h);
+    ctx.lineTo(b.x, b.y + b.h);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   }
 
@@ -940,29 +901,13 @@
   function drawBigWall() {
     const l = state.layout;
     const wall = { x: 0, y: l.topH, w: l.w, h: l.h - l.topH };
-    drawWallWithHole(wall, l.bigHole, { stroke: 5.5, fill: '#fffdf6' });
-
-    ctx.save();
-    ctx.globalAlpha = 0.55;
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = 1.5;
-    for (let i = 0; i < 9; i++) {
-      const y = l.topH + 36 + i * 52;
-      ctx.beginPath();
-      ctx.moveTo(12, y + Math.sin(i) * 4);
-      ctx.quadraticCurveTo(l.w * 0.28, y - 8, l.w * 0.46, y + 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(l.w - 12, y + 16 + Math.cos(i) * 3);
-      ctx.quadraticCurveTo(l.w * 0.72, y + 4, l.w * 0.55, y + 12);
-      ctx.stroke();
-    }
-    ctx.restore();
+    drawWallWithHole(wall, l.bigHole, { stroke: 6, fill: '#fffdf6' });
   }
 
   function drawWallWithHole(wall, hole, opts = {}) {
     const fill = opts.fill || '#fffdf6';
     const stroke = opts.stroke || 4;
+    const radius = opts.radius || 12;
     ctx.save();
     ctx.fillStyle = fill;
     ctx.strokeStyle = '#111';
@@ -973,53 +918,61 @@
     ctx.fillRect(hole.x, wall.y, hole.w, Math.max(0, hole.y - wall.y));
     ctx.fillRect(hole.x, hole.y + hole.h, hole.w, Math.max(0, wall.y + wall.h - (hole.y + hole.h)));
 
-    roundRect(hole.x, hole.y, hole.w, hole.h, 10, false, true, stroke);
+    roundRect(hole.x, hole.y, hole.w, hole.h, radius, false, true, stroke);
 
-    ctx.globalAlpha = 0.9;
-    ctx.lineWidth = Math.max(1.5, stroke * 0.45);
-    ctx.beginPath();
-    ctx.moveTo(hole.x - 12, hole.y + 10);
-    ctx.lineTo(hole.x - 12, hole.y + hole.h - 10);
-    ctx.moveTo(hole.x + hole.w + 12, hole.y + 10);
-    ctx.lineTo(hole.x + hole.w + 12, hole.y + hole.h - 10);
-    ctx.stroke();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#111';
+    roundRect(hole.x + stroke * 0.48, hole.y + stroke * 0.48, hole.w - stroke * 0.96, hole.h - stroke * 0.96, Math.max(6, radius - 3), true, false, 0);
     ctx.restore();
   }
 
   function drawDoorPanel(door, progress, opts = {}) {
     const alpha = opts.alpha ?? doorAlphaForGhostEye();
-    const slide = door.w * 0.88 * progress;
+    const slide = door.w * 0.92 * progress;
     const x = door.x - slide;
     const y = door.y;
     const w = door.w;
     const h = door.h;
+    const strokeW = opts.big ? 6 : 3.2;
+    const inset = Math.max(8, w * 0.048);
+    const handleW = Math.max(10, w * 0.05);
+    const handleH = h * 0.18;
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = '#fff9e9';
+
+    const shadow = ctx.createLinearGradient(x, y, x + w, y);
+    shadow.addColorStop(0, '#efe8d5');
+    shadow.addColorStop(0.12, '#f7f1df');
+    shadow.addColorStop(0.84, '#fcf7ea');
+    shadow.addColorStop(1, '#e8dfc8');
+    ctx.fillStyle = shadow;
     ctx.strokeStyle = '#111';
-    ctx.lineWidth = opts.big ? 5 : 3;
-    roundRect(x, y, w, h, 14, true, true, ctx.lineWidth);
+    ctx.lineWidth = strokeW;
+    roundRect(x, y, w, h, 16, true, true, strokeW);
 
-    ctx.lineWidth = opts.big ? 3 : 1.8;
-    for (let i = 1; i < 5; i++) {
-      const yy = y + (h / 5) * i;
-      ctx.beginPath();
-      ctx.moveTo(x + 10, yy + Math.sin(i + state.t) * 1.2);
-      ctx.lineTo(x + w - 10, yy + Math.cos(i) * 1.3);
-      ctx.stroke();
-    }
+    ctx.lineWidth = Math.max(2, strokeW * 0.56);
+    roundRect(x + inset, y + inset, w - inset * 2, h - inset * 2, 11, false, true, ctx.lineWidth);
 
-    ctx.lineWidth = opts.big ? 4 : 2.2;
-    const handleX = x + w * 0.78;
-    const handleY = y + h * 0.51;
+    const splitX = x + w * 0.52;
     ctx.beginPath();
-    ctx.arc(handleX, handleY, Math.max(4, w * 0.035), 0, Math.PI * 2);
+    ctx.moveTo(splitX, y + inset + 4);
+    ctx.lineTo(splitX, y + h - inset - 4);
     ctx.stroke();
+
+    ctx.globalAlpha = alpha * 0.22;
+    ctx.fillStyle = '#ffffff';
+    roundRect(x + inset * 0.9, y + inset * 0.9, w * 0.18, h - inset * 1.8, 10, true, false, 0);
+    ctx.globalAlpha = alpha;
+
+    const handleX = x + w - inset * 1.15 - handleW;
+    const handleY = y + h * 0.5 - handleH / 2;
+    roundRect(handleX, handleY, handleW, handleH, 6, false, true, Math.max(2, strokeW * 0.44));
     ctx.beginPath();
-    ctx.moveTo(handleX + w * 0.04, handleY - h * 0.05);
-    ctx.lineTo(handleX + w * 0.04, handleY + h * 0.05);
+    ctx.moveTo(handleX + handleW * 0.45, handleY + handleH * 0.2);
+    ctx.lineTo(handleX + handleW * 0.45, handleY + handleH * 0.8);
     ctx.stroke();
+
     ctx.restore();
   }
 
@@ -1030,7 +983,7 @@
 
   function actualDoorRect() {
     const d = state.layout.bigDoor;
-    const x = d.x - d.w * 0.88 * state.door;
+    const x = d.x - d.w * 0.92 * state.door;
     return { x, y: d.y, w: d.w, h: d.h };
   }
 
