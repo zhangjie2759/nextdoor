@@ -1,14 +1,14 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.18';
+  const VERSION = 'v0.11.13';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
   const STORAGE_KEY = 'next_room_v01111_save';
 
-  const ASSET_BASES = ['assets/', './assets/', './', 'images/', './images/'];
+  const ASSET_BASES = ['assets/', './', 'images/'];
 
   const GHOSTS = [
     { name: '猼訑', nameEn: 'Botuo', file: '猼訑.png', type: 'normal', speed: 1.28, fire: 2, desc: '警觉又狡猾，喜欢躲在门后观察人。', descEn: 'Alert and cunning. It likes watching people from behind the door.' },
@@ -64,7 +64,6 @@
     sealFlash: 0,
     personFade: 0,
     transition: 0,
-    transitionDoor: 0,
     transitionFadeContent: true,
     pendingNextRoom: 2,
     resultReason: '',
@@ -117,84 +116,21 @@
     } catch (e) {}
   }
 
-  const assetCache = {};
-
-  function assetCandidateUrls(file) {
-    const urls = [];
-    const push = src => {
-      if (!src || urls.includes(src)) return;
-      urls.push(src);
-      const encoded = encodeURI(src);
-      if (encoded !== src && !urls.includes(encoded)) urls.push(encoded);
-    };
-    // 先并行尝试最常用的资源位置，避免一层层 404 导致看起来“加载很慢”。
-    ASSET_BASES.forEach(base => push(base + file));
-    return urls;
-  }
-
   function loadImageWithFallback(file) {
-    const existing = assetCache[file];
-    if (existing && existing.started) return existing;
-
-    const record = {
-      started: true,
-      loaded: false,
-      failed: false,
-      img: null,
-      pending: 0,
-      src: ''
+    let baseIndex = 0;
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => { assets[file] = img; };
+    img.onerror = () => {
+      baseIndex += 1;
+      if (baseIndex < ASSET_BASES.length) {
+        img.src = ASSET_BASES[baseIndex] + file;
+      } else {
+        assets[file] = null;
+      }
     };
-    assetCache[file] = record;
-
-    const candidates = assetCandidateUrls(file);
-    record.pending = candidates.length;
-
-    candidates.forEach(src => {
-      const img = new Image();
-      img.decoding = 'async';
-      img.onload = () => {
-        if (record.loaded) return;
-        record.loaded = true;
-        record.failed = false;
-        record.img = img;
-        record.src = src;
-        assets[file] = img;
-      };
-      img.onerror = () => {
-        record.pending -= 1;
-        if (record.pending <= 0 && !record.loaded) {
-          record.failed = true;
-          // 只标记失败，不阻止后续重新尝试。
-          assets[file] = null;
-        }
-      };
-      img.src = src;
-    });
-
-    return record;
-  }
-
-  function getAssetImage(file) {
-    let record = assetCache[file];
-    if (!record || (!record.started && !record.loaded)) {
-      record = loadImageWithFallback(file);
-    }
-    if (record && record.loaded && record.img && record.img.complete && record.img.naturalWidth) {
-      return record.img;
-    }
-    const legacy = assets[file];
-    if (legacy && legacy.complete && legacy.naturalWidth) return legacy;
-
-    // 如果所有候选都失败，过一会儿允许重新尝试，避免 GitHub Pages / 缓存短暂异常后永久空掉。
-    if (record && record.failed && !record.retryAt) {
-      record.retryAt = state.t + 1.2;
-    }
-    if (record && record.failed && record.retryAt && state.t > record.retryAt) {
-      delete assetCache[file];
-      delete assets[file];
-      loadImageWithFallback(file);
-    }
-    return null;
+    img.src = ASSET_BASES[baseIndex] + file;
+    assets[file] = img;
   }
 
   allAssetFiles.forEach(loadImageWithFallback);
@@ -276,7 +212,6 @@
     state.sealFlash = 0;
     state.personFade = 0;
     state.transition = 0;
-    state.transitionDoor = 0;
     state.transitionFadeContent = true;
     state.pendingNextRoom = 2;
     state.resultReason = '';
@@ -466,6 +401,15 @@
       return;
     }
 
+    if (state.mode === 'personFade') {
+      const fadeSpeed = state.difficulty === 'normal' ? 2.05 : 1.55;
+      state.personFade += dt * fadeSpeed;
+      if (state.personFade >= 1) {
+        startAdvance({ toRoom: state.room + 1, fadeContent: false });
+      }
+      return;
+    }
+
     if (state.snapTarget !== null && !state.draggingDoor && state.mode === 'normal') {
       const direction = state.snapTarget > state.door ? 1 : -1;
       const speed = state.difficulty === 'normal' ? 2.85 : 2.20;
@@ -505,8 +449,14 @@
     } else if (c.type === 'person' || c.type === 'empty') {
       if (state.door >= 0.92) {
         c.passTimer += dt;
-        if (c.passTimer > 0.06) {
-          startAdvance({ toRoom: state.room + 1, fadeContent: c.type === 'person', doorProgress: state.door });
+        if (c.passTimer > 0.22) {
+          if (c.type === 'person') {
+            state.mode = 'personFade';
+            state.personFade = 0;
+            state.snapTarget = null;
+          } else {
+            startAdvance({ toRoom: state.room + 1 });
+          }
         }
       } else {
         c.passTimer = 0;
@@ -541,7 +491,6 @@
   function startAdvance(opts = {}) {
     state.mode = 'transition';
     state.transition = 0;
-    state.transitionDoor = opts.doorProgress !== undefined ? opts.doorProgress : state.door;
     state.transitionFadeContent = opts.fadeContent !== false;
     state.personFade = 0;
     state.pendingNextRoom = opts.toRoom || state.room + 1;
@@ -555,7 +504,6 @@
   function finishAdvance() {
     state.room = state.pendingNextRoom;
     state.transition = 0;
-    state.transitionDoor = 0;
     state.personFade = 0;
     state.transitionFadeContent = true;
     createContent();
@@ -900,8 +848,8 @@
     ctx.fillStyle = '#fffdf6';
     roundRect(l.w / 2 - 138, l.h * 0.18, 276, 126, 24, true, true, 5);
     ctx.fillStyle = '#111';
-    ctx.font = en ? '900 34px system-ui, -apple-system, sans-serif' : '900 45px system-ui, -apple-system, sans-serif';
-    ctx.fillText(en ? 'TIMID EXORCIST' : '胆小除魔师', l.w / 2, l.h * 0.24);
+    ctx.font = en ? '900 44px system-ui, -apple-system, sans-serif' : '900 54px system-ui, -apple-system, sans-serif';
+    ctx.fillText(en ? 'NEXT ROOM' : '下一间', l.w / 2, l.h * 0.24);
     ctx.font = '700 15px system-ui, -apple-system, sans-serif';
     ctx.fillText(en ? 'Open. Observe. Decide.' : '开门一秒，识别异常', l.w / 2, l.h * 0.305);
     ctx.font = '700 13px system-ui, -apple-system, sans-serif';
@@ -1155,8 +1103,8 @@
       ctx.restore();
     }
     drawBigWall(bigHole);
-    drawDoorPanel(bigDoor, state.transitionDoor, { big: true });
-    drawDoorBaseLine(bigDoor, state.transitionDoor, 1);
+    drawDoorPanel(bigDoor, 0, { big: true });
+    drawDoorBaseLine(bigDoor, 0, 1);
     ctx.restore();
   }
 
@@ -1455,8 +1403,12 @@
     const hole = holeArg || l.bigHole;
     const floorY = door.y + door.h * 0.96;
     let contentAlpha = state.mode === 'transition' && state.transitionFadeContent
-      ? clamp(1 - state.transition, 0, 1)
+      ? clamp(1 - state.transition * 1.15, 0, 1)
       : 1;
+    if (state.mode === 'personFade' && c.type === 'person') {
+      contentAlpha *= clamp(1 - state.personFade, 0, 1);
+    }
+
     ctx.save();
     ctx.globalAlpha *= contentAlpha;
     ctx.beginPath();
@@ -1507,10 +1459,10 @@
       const x = cx + side * bodyH * (0.22 + layer * 0.08) + drift;
       const y = cy - bodyH * (0.04 + layer * 0.035) + bob;
       const size = bodyH * (0.14 + (i % 3) * 0.022);
-      const img = getAssetImage(GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]);
+      const img = assets[GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]];
       const pulse = 0.72 + Math.sin(state.t * 3.2 + i) * 0.15;
       ctx.globalAlpha = clamp(0.72 + pulse * 0.24, 0.58, 1);
-      if (img && img.naturalWidth) {
+      if (img && img.complete && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
       } else {
         drawCodeGhostFire(x, y, size, pulse);
@@ -1538,7 +1490,7 @@
   }
 
   function drawCharacter(def, x, floorY, targetH, kind, scale = 1) {
-    const img = getAssetImage(def.file);
+    const img = assets[def.file];
     const h = targetH * scale * (def.scale || 1);
     const aspect = img && img.naturalWidth ? img.naturalWidth / img.naturalHeight : 0.62;
     const w = h * aspect;
@@ -1551,45 +1503,31 @@
       ctx.shadowBlur = 24 + pulse * 16;
     }
 
-    if (img && img.naturalWidth) {
+    if (img && img.complete && img.naturalWidth) {
       ctx.drawImage(img, x - w / 2, y, w, h);
     } else {
-      // 游戏内绝不能因为素材加载慢/路径问题而看不到内容。
-      // 这里画临时鬼/人物占位；蛋形问号只允许用于图鉴未解锁。
-      drawFallbackCharacter(def.name || displayName(def), x, y, w, h, kind);
+      drawFallbackCharacter(def.name, x, y, w, h, kind);
     }
     ctx.restore();
   }
 
   function drawFallbackCharacter(name, x, y, w, h, kind) {
     ctx.save();
-    const isPerson = kind === 'person';
-    const isBoss = kind === 'boss';
-    ctx.fillStyle = isPerson ? '#fffdf6' : '#111';
-    ctx.strokeStyle = isPerson ? '#111' : '#fffdf6';
-    ctx.lineWidth = isBoss ? 5 : 4;
-    // 临时站立角色：不是图鉴蛋形，占位时仍能判断门后有东西。
+    ctx.fillStyle = kind === 'person' ? '#fffdf6' : '#111';
+    ctx.strokeStyle = kind === 'person' ? '#111' : '#fffdf6';
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(x, y + h * 0.16, w * 0.20, 0, Math.PI * 2);
+    ctx.ellipse(x, y + h * 0.43, w * 0.38, h * 0.42, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(x, y + h * 0.30);
-    ctx.bezierCurveTo(x + w * 0.34, y + h * 0.35, x + w * 0.32, y + h * 0.70, x, y + h * 0.82);
-    ctx.bezierCurveTo(x - w * 0.34, y + h * 0.70, x - w * 0.32, y + h * 0.35, x, y + h * 0.30);
-    ctx.closePath();
+    ctx.arc(x, y + h * 0.14, w * 0.23, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x - w * 0.15, y + h * 0.82);
-    ctx.lineTo(x - w * 0.26, y + h);
-    ctx.moveTo(x + w * 0.15, y + h * 0.82);
-    ctx.lineTo(x + w * 0.26, y + h);
-    ctx.stroke();
-    ctx.fillStyle = isPerson ? '#111' : '#fffdf6';
-    ctx.font = '700 11px system-ui, sans-serif';
+    ctx.fillStyle = kind === 'person' ? '#111' : '#fffdf6';
+    ctx.font = '700 12px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(String(name || '').slice(0, 4), x, y + h * 0.55);
+    ctx.fillText(name.slice(0, 4), x, y + h * 0.54);
     ctx.restore();
   }
 
@@ -1730,7 +1668,7 @@
 
   function drawBottomControls() {
     const l = state.layout;
-    if (state.mode === 'transition' || state.mode === 'sealSuccess') return;
+    if (state.mode === 'transition' || state.mode === 'sealSuccess' || state.mode === 'personFade') return;
 
     if (state.mode === 'bossFight') {
       drawBossSealButton(l.bossButton);
@@ -1741,7 +1679,7 @@
   }
 
   function drawSealButton(r) {
-    const img = getAssetImage('封印按钮.png');
+    const img = assets['封印按钮.png'];
     ctx.save();
     if (img && img.complete && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
@@ -1853,9 +1791,9 @@
       const x = baseX + Math.sin(state.t * (0.8 + i * 0.06) + i) * 16;
       const y = baseY + Math.cos(state.t * (1.0 + i * 0.08) + i * 1.7) * 18;
       const size = Math.max(34, Math.min(58, l.w * (0.09 + (i % 3) * 0.012)));
-      const img = getAssetImage(GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]);
+      const img = assets[GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]];
       ctx.globalAlpha = 0.34 + Math.sin(state.t * 2 + i) * 0.08;
-      if (img && img.naturalWidth) {
+      if (img && img.complete && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
       } else {
         drawCodeGhostFire(x, y, size, 0.8);
@@ -1987,8 +1925,8 @@
   }
 
   function drawCardImage(item, box, silhouette) {
-    const img = getAssetImage(item.file);
-    if (img && img.naturalWidth) {
+    const img = assets[item.file];
+    if (img && img.complete && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
       let drawH = box.h * 0.96;
       let drawW = drawH * aspect;
