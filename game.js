@@ -1,27 +1,27 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.5';
+  const VERSION = 'v0.11.6';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0115_save';
+  const STORAGE_KEY = 'next_room_v0116_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
   const GHOSTS = [
-    { name: '猼訑', file: '猼訑.png', type: 'normal', speed: 1.05, fire: 1, desc: '警觉又狡猾，喜欢躲在门后观察人。' },
-    { name: '赤鱬', file: '赤鱬.png', type: 'thin', speed: 1.62, fire: 2, desc: '细长灵活，动作很快，最擅长突然贴近。' },
-    { name: '当康', file: '当康.png', type: 'heavy', speed: 0.86, fire: 2, desc: '体型敦实，压迫感强，逼近时像重物挪动。' },
-    { name: '混沌', file: '混沌.png', type: 'heavy', speed: 0.98, fire: 3, desc: '轮廓混乱，越盯着看越分不清它的形状。' },
-    { name: '九尾狐', file: '九尾狐.png', type: 'normal', speed: 1.24, fire: 3, ghostEye: true, desc: '擅长迷惑视线，被封印后会短暂开启鬼眼。' },
-    { name: '夔牛', file: '夔牛.png', type: 'heavy', speed: 1.02, fire: 3, desc: '独脚震地，虽然不快，但每次靠近都很有压迫。' },
-    { name: '麒麟', file: '麒麟.png', type: 'normal', speed: 1.10, fire: 3, desc: '外表庄重，但在门后出现时往往并不吉利。' },
-    { name: '穷奇', file: '穷奇.png', type: 'thin', speed: 1.78, fire: 4, desc: '凶性外露，判断失误时最容易被它扑出门。' },
-    { name: '饕餮', file: '饕餮.png', type: 'heavy', speed: 1.12, fire: 5, desc: '贪婪巨口，虽然笨重，但存在感异常强烈。' },
-    { name: '狰', file: '狰.png', type: 'normal', speed: 1.36, fire: 4, desc: '神情凶狠，常常伴着成群鬼火一起出现。' },
-    { name: '烛阴', file: '烛阴.png', type: 'thin', speed: 1.92, fire: 5, desc: '危险等级极高，速度极快，几乎不给人反应时间。' }
+    { name: '猼訑', file: '猼訑.png', type: 'normal', speed: 1.28, fire: 2, desc: '警觉又狡猾，喜欢躲在门后观察人。' },
+    { name: '赤鱬', file: '赤鱬.png', type: 'thin', speed: 2.08, fire: 2, desc: '细长灵活，动作很快，最擅长突然贴近。' },
+    { name: '当康', file: '当康.png', type: 'heavy', speed: 1.05, fire: 2, desc: '体型敦实，压迫感强，逼近时像重物挪动。' },
+    { name: '混沌', file: '混沌.png', type: 'heavy', speed: 0.72, fire: 3, desc: '轮廓混乱，越盯着看越分不清它的形状。' },
+    { name: '九尾狐', file: '九尾狐.png', type: 'normal', speed: 1.76, fire: 2, ghostEye: true, desc: '擅长迷惑视线，被封印后会短暂开启鬼眼。' },
+    { name: '夔牛', file: '夔牛.png', type: 'heavy', speed: 1.18, fire: 2, desc: '独脚震地，虽然不快，但每次靠近都很有压迫。' },
+    { name: '麒麟', file: '麒麟.png', type: 'normal', speed: 1.42, fire: 2, desc: '外表庄重，但在门后出现时往往并不吉利。' },
+    { name: '穷奇', file: '穷奇.png', type: 'thin', speed: 2.22, fire: 3, desc: '凶性外露，判断失误时最容易被它扑出门。' },
+    { name: '饕餮', file: '饕餮.png', type: 'heavy', speed: 1.32, fire: 3, desc: '贪婪巨口，虽然笨重，但存在感异常强烈。' },
+    { name: '狰', file: '狰.png', type: 'normal', speed: 1.70, fire: 3, desc: '神情凶狠，常常伴着成群鬼火一起出现。' },
+    { name: '烛阴', file: '烛阴.png', type: 'thin', speed: 2.45, fire: 3, desc: '危险等级极高，速度极快，几乎不给人反应时间。' }
   ];
 
   const PEOPLE = [
@@ -370,7 +370,7 @@
     if (state.screen !== 'game') return;
 
     if (state.mode === 'transition') {
-      state.transition += dt * 1.08;
+      state.transition += dt * 1.72;
       if (state.transition >= 1) finishAdvance();
       return;
     }
@@ -379,7 +379,7 @@
       state.sealFlash += dt;
       if (state.sealFlash >= 0.72) {
         if (state.content && state.content.talismans) state.content.talismans = [];
-        startAdvance({ toRoom: state.pendingNextRoom, fadeContent: true });
+        finishSealAdvance();
       }
       return;
     }
@@ -407,11 +407,11 @@
 
     if (c.type === 'ghost') {
       if (state.door > 0.055) {
-        const base = 0.30 + Math.min(state.room, 90) * 0.0038;
+        const base = 0.43 + Math.min(state.room, 90) * 0.0052;
         const speediest = Math.max(...c.ghosts.map(ghostDangerSpeed));
         const multi = 1 + (c.ghosts.length - 1) * 0.28;
-        const easySlow = state.difficulty === 'easy' && c.ghosts.some(g => g.type === 'thin') ? 0.72 : 1;
-        const openFactor = 0.72 + state.door * 0.76;
+        const easySlow = state.difficulty === 'easy' && c.ghosts.some(g => g.type === 'thin') ? 0.80 : 1;
+        const openFactor = 0.82 + state.door * 0.90;
         state.danger += dt * base * speediest * multi * easySlow * openFactor;
       } else {
         state.danger = 0;
@@ -468,6 +468,20 @@
     state.room = state.pendingNextRoom;
     state.transition = 0;
     state.transitionFadeContent = true;
+    createContent();
+  }
+
+  function finishSealAdvance() {
+    state.room = state.pendingNextRoom;
+    state.mode = 'normal';
+    state.door = 0;
+    state.snapTarget = null;
+    state.draggingDoor = false;
+    state.danger = 0;
+    state.sealFlash = 0;
+    state.transition = 0;
+    state.save.bestRoom = Math.max(state.save.bestRoom || 1, state.room);
+    saveGame();
     createContent();
   }
 
@@ -865,6 +879,7 @@
     drawBigWall();
     drawBossGlow();
     drawDoorPanel(l.bigDoor, state.door, { big: true });
+    drawDoorBaseLine(l.bigDoor, state.door, 1);
     drawDoorTalismans();
     drawSealSuccessGlow();
     drawDangerVignette();
@@ -905,6 +920,7 @@
     }
     drawBigWall(bigHole);
     drawDoorPanel(bigDoor, 0, { big: true });
+    drawDoorBaseLine(bigDoor, 0, 1);
     ctx.restore();
   }
 
@@ -921,33 +937,56 @@
     const l = state.layout;
     const a = holeArg || l.bigHole;
     const b = wallArg || l.smallWall;
+    const floorNearY = a.y + a.h;
+    const floorFarY = b.y + b.h;
+
     ctx.save();
-    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
     ctx.lineWidth = 2;
+
+    // 墙面与空间边界：参考图里的房间透视，但线条不要卡死在门洞上。
     ctx.beginPath();
-    ctx.moveTo(a.x - a.w * 0.08, a.y - a.h * 0.05);
+    ctx.moveTo(a.x - a.w * 0.06, a.y + a.h * 0.02);
     ctx.lineTo(b.x, b.y);
-    ctx.moveTo(a.x + a.w * 1.08, a.y - a.h * 0.05);
+    ctx.moveTo(a.x + a.w * 1.06, a.y + a.h * 0.02);
     ctx.lineTo(b.x + b.w, b.y);
-    ctx.moveTo(a.x - a.w * 0.10, a.y + a.h);
-    ctx.lineTo(b.x, b.y + b.h);
-    ctx.moveTo(a.x + a.w * 1.10, a.y + a.h);
-    ctx.lineTo(b.x + b.w, b.y + b.h);
+    ctx.moveTo(a.x - a.w * 0.06, floorNearY);
+    ctx.lineTo(b.x, floorFarY);
+    ctx.moveTo(a.x + a.w * 1.06, floorNearY);
+    ctx.lineTo(b.x + b.w, floorFarY);
     ctx.stroke();
 
-    const floorTop = lerp(a.y + a.h, b.y + b.h, 0.10);
-    const floorBottom = a.y + a.h + 8;
-    const g = ctx.createLinearGradient(0, floorTop, 0, floorBottom);
-    g.addColorStop(0, 'rgba(0,0,0,0.00)');
-    g.addColorStop(1, 'rgba(0,0,0,0.08)');
-    ctx.fillStyle = g;
+    // 门内落地线
+    ctx.lineWidth = 2.4;
     ctx.beginPath();
-    ctx.moveTo(a.x - a.w * 0.04, a.y + a.h);
-    ctx.lineTo(a.x + a.w * 1.04, a.y + a.h);
-    ctx.lineTo(b.x + b.w, b.y + b.h);
-    ctx.lineTo(b.x, b.y + b.h);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(a.x - a.w * 0.05, floorNearY);
+    ctx.lineTo(a.x + a.w * 1.05, floorNearY);
+    ctx.stroke();
+
+    // 地板透视网格，只在地面区域出现。
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    ctx.lineWidth = 1.1;
+    const vanX = b.x + b.w / 2;
+    const farHalf = b.w * 0.46;
+    for (let i = -3; i <= 3; i++) {
+      const startX = a.x + a.w * (0.5 + i * 0.16);
+      const endX = vanX + i * farHalf * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(startX, floorNearY);
+      ctx.lineTo(endX, floorFarY);
+      ctx.stroke();
+    }
+    for (let i = 1; i <= 4; i++) {
+      const k = i / 5;
+      const kk = k * k;
+      const y = lerp(floorNearY, floorFarY, kk);
+      const left = lerp(a.x - a.w * 0.04, b.x, kk);
+      const right = lerp(a.x + a.w * 1.04, b.x + b.w, kk);
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -956,35 +995,38 @@
     ctx.globalAlpha = alpha;
     const floorTop = frontHole.y + frontHole.h;
     const floorBottom = Math.min(state.layout.h - state.layout.bottomH * 0.35, floorTop + state.layout.gameH * 0.20);
-    ctx.fillStyle = '#f5f5f5';
-    ctx.beginPath();
-    ctx.moveTo(frontHole.x - frontHole.w * 0.18, floorTop);
-    ctx.lineTo(frontHole.x + frontHole.w * 1.18, floorTop);
-    ctx.lineTo(innerWall.x + innerWall.w * 1.1, innerWall.y + innerWall.h * 1.06);
-    ctx.lineTo(innerWall.x - innerWall.w * 0.1, innerWall.y + innerWall.h * 1.06);
-    ctx.closePath();
-    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-state.layout.w, state.layout.topH, state.layout.w * 3, state.layout.h);
 
     const shadow = ctx.createLinearGradient(0, floorTop, 0, floorBottom);
-    shadow.addColorStop(0, 'rgba(0,0,0,0.14)');
+    shadow.addColorStop(0, 'rgba(0,0,0,0.08)');
     shadow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = shadow;
-    ctx.fillRect(frontHole.x - frontHole.w * 0.12, floorTop - 1, frontHole.w * 1.24, floorBottom - floorTop);
+    ctx.fillRect(frontHole.x - frontHole.w * 0.18, floorTop - 1, frontHole.w * 1.36, floorBottom - floorTop);
+
+    // 最外门的落地线
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(frontHole.x - frontHole.w * 0.12, floorTop);
+    ctx.lineTo(frontHole.x + frontHole.w * 1.12, floorTop);
+    ctx.stroke();
     ctx.restore();
   }
 
   function drawSmallWallAndDoor(wall, hole, door, alpha = 1) {
     ctx.save();
     ctx.globalAlpha = alpha;
-    drawWallWithHole(wall, hole, { stroke: 3.5, fill: '#ffffff' });
-    drawDoorPanel(door, 0, { big: false });
+    drawWallWithHole(wall, hole, { stroke: 5, fill: '#ffffff' });
+    drawDoorPanel(door, 0, { big: false, noHandle: true });
+    drawDoorBaseLine(door, 0, alpha);
     ctx.restore();
   }
 
   function drawBigWall(holeArg) {
     const l = state.layout;
     const wall = { x: 0, y: l.topH, w: l.w, h: l.h - l.topH };
-    drawWallWithHole(wall, holeArg || l.bigHole, { stroke: 6, fill: '#ffffff' });
+    drawWallWithHole(wall, holeArg || l.bigHole, { stroke: 5, fill: '#ffffff' });
   }
 
   function drawWallWithHole(wall, hole, opts = {}) {
@@ -1013,59 +1055,76 @@
     const y = door.y;
     const w = door.w;
     const h = door.h;
-    const strokeW = opts.big ? 5 : 5;
-    const inset = Math.max(10, w * 0.055);
-    const handleW = Math.max(9, w * 0.046);
-    const handleH = h * 0.20;
+    const strokeW = 5;
+    const inset = 13;
+    const handleW = 8;
+    const handleH = Math.min(76, h * 0.18);
 
     ctx.save();
     ctx.globalAlpha = alpha;
 
     const body = ctx.createLinearGradient(x, y, x + w, y);
-    body.addColorStop(0, '#723826');
-    body.addColorStop(0.15, '#8a4830');
-    body.addColorStop(0.50, '#9c5639');
-    body.addColorStop(0.82, '#7f412d');
-    body.addColorStop(1, '#693221');
+    body.addColorStop(0, '#6f3523');
+    body.addColorStop(0.18, '#8b4a30');
+    body.addColorStop(0.52, '#a35b3b');
+    body.addColorStop(0.84, '#7b3d29');
+    body.addColorStop(1, '#5f2b1c');
     ctx.fillStyle = body;
     ctx.strokeStyle = '#111';
     ctx.lineWidth = strokeW;
-    roundRect(x, y, w, h, 12, true, true, strokeW);
+    roundRect(x, y, w, h, 10, true, true, strokeW);
 
     ctx.save();
     ctx.beginPath();
-    roundRectPath(x + 2, y + 2, w - 4, h - 4, 10);
+    roundRectPath(x + 3, y + 3, w - 6, h - 6, 8);
     ctx.clip();
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
     ctx.lineWidth = 1;
-    for (let i = 0; i < 10; i++) {
-      const yy = y + h * (0.08 + i * 0.09);
+    for (let i = 0; i < 12; i++) {
+      const yy = y + h * (0.06 + i * 0.08);
       ctx.beginPath();
-      ctx.moveTo(x + 6, yy + Math.sin(i * 1.7) * 2);
-      ctx.lineTo(x + w - 6, yy + Math.cos(i * 1.2) * 2);
+      ctx.moveTo(x + 8, yy + Math.sin(i * 1.7) * 1.5);
+      ctx.lineTo(x + w - 8, yy + Math.cos(i * 1.2) * 1.5);
       ctx.stroke();
     }
     ctx.restore();
 
-    ctx.lineWidth = 2.4;
-    ctx.strokeStyle = 'rgba(255,255,255,0.24)';
-    roundRect(x + inset, y + inset, w - inset * 2, h - inset * 2, 9, false, true, 2.4);
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    roundRect(x + inset, y + inset, w - inset * 2, h - inset * 2, 8, false, true, 2.2);
 
-    ctx.globalAlpha = alpha * 0.16;
+    ctx.globalAlpha = alpha * 0.15;
     ctx.fillStyle = '#ffffff';
-    roundRect(x + inset * 0.85, y + inset * 0.85, w * 0.15, h - inset * 1.7, 10, true, false, 0);
+    roundRect(x + inset, y + inset, Math.max(22, w * 0.12), h - inset * 2, 8, true, false, 0);
     ctx.globalAlpha = alpha;
 
-    const handleX = x + w - inset * 1.25 - handleW;
-    const handleY = y + h * 0.5 - handleH / 2;
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = 2.4;
-    roundRect(handleX, handleY, handleW, handleH, 5, false, true, 2.4);
-    ctx.beginPath();
-    ctx.moveTo(handleX + handleW * 0.48, handleY + handleH * 0.20);
-    ctx.lineTo(handleX + handleW * 0.48, handleY + handleH * 0.80);
-    ctx.stroke();
+    if (!opts.noHandle) {
+      const handleX = x + w - inset - handleW - 8;
+      const handleY = y + h * 0.5 - handleH / 2;
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 2.4;
+      roundRect(handleX, handleY, handleW, handleH, 4, false, true, 2.4);
+      ctx.beginPath();
+      ctx.moveTo(handleX + handleW * 0.5, handleY + handleH * 0.18);
+      ctx.lineTo(handleX + handleW * 0.5, handleY + handleH * 0.82);
+      ctx.stroke();
+    }
 
+    ctx.restore();
+  }
+
+  function drawDoorBaseLine(door, progress = 0, alpha = 1) {
+    const slide = door.w * 0.96 * progress;
+    const x = door.x - slide;
+    const y = door.y + door.h;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = 'rgba(0,0,0,0.68)';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(x - door.w * 0.05, y);
+    ctx.lineTo(x + door.w * 1.05, y);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1126,10 +1185,11 @@
       const baseH = door.h * (count === 1 ? 0.60 : count === 2 ? 0.49 : 0.40);
       const spread = door.w * (count === 1 ? 0 : count === 2 ? 0.25 : 0.28);
       c.ghosts.forEach((g, i) => {
-        const offset = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
-        const gx = door.x + door.w / 2 + offset;
+        const baseOffset = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
+        const hiddenOffset = g.name === '九尾狐' ? -door.w * 0.24 : 0;
+        const gx = door.x + door.w / 2 + baseOffset + hiddenOffset;
         const gh = baseH * dangerScale;
-        drawGhostFires(g, gx, floorY - gh * 0.58, gh, g.fire || 1, i);
+        drawGhostFires(g, gx, floorY - gh * 0.58, gh, Math.max(1, g.fire || 1), i);
         drawCharacter(g, gx, floorY, baseH, 'ghost', dangerScale);
       });
     } else if (c.type === 'boss') {
@@ -1142,16 +1202,7 @@
   }
 
   function drawEmptyRoomMark(hole) {
-    ctx.save();
-    ctx.globalAlpha = 0.16;
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = 2;
-    const cx = hole.x + hole.w / 2;
-    const cy = hole.y + hole.h * 0.56;
-    ctx.beginPath();
-    ctx.arc(cx, cy, hole.w * 0.11, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+    // 空房间不再画圆圈标记，避免被误认为小门上的图案。
   }
 
   function drawGhostFires(def, cx, cy, bodyH, count, seed = 0) {
