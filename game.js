@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.15';
+  const VERSION = 'v0.11.17-lazy';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -88,12 +88,7 @@
   };
 
   const assets = {};
-  const allAssetFiles = [
-    '封印按钮.png',
-    ...PEOPLE.map(p => p.file),
-    ...GHOSTS.map(g => g.file),
-    ...GHOST_FIRE_FILES
-  ];
+  const assetState = {};
 
   function loadSave() {
     try {
@@ -116,24 +111,57 @@
     } catch (e) {}
   }
 
+  function ensureAsset(file) {
+    if (!file) return null;
+    if (assetState[file] === 'loaded' || assetState[file] === 'loading' || assetState[file] === 'failed') {
+      return assets[file] || null;
+    }
+    return loadImageWithFallback(file);
+  }
+
+  function getAsset(file) {
+    const img = assets[file];
+    if (!img && assetState[file] !== 'failed') ensureAsset(file);
+    return assets[file] || null;
+  }
+
   function loadImageWithFallback(file) {
     let baseIndex = 0;
     const img = new Image();
     img.decoding = 'async';
-    img.onload = () => { assets[file] = img; };
+    assetState[file] = 'loading';
+    img.onload = () => {
+      assets[file] = img;
+      assetState[file] = 'loaded';
+    };
     img.onerror = () => {
       baseIndex += 1;
       if (baseIndex < ASSET_BASES.length) {
         img.src = ASSET_BASES[baseIndex] + file;
       } else {
         assets[file] = null;
+        assetState[file] = 'failed';
       }
     };
     img.src = ASSET_BASES[baseIndex] + file;
     assets[file] = img;
+    return img;
   }
 
-  allAssetFiles.forEach(loadImageWithFallback);
+  function warmContentAssets(content) {
+    ensureAsset('封印按钮.png');
+    if (!content) return;
+    if (content.type === 'person' && content.person) {
+      ensureAsset(content.person.file);
+    } else if (content.type === 'ghost' && content.ghosts) {
+      content.ghosts.forEach(g => ensureAsset(g.file));
+    } else if (content.type === 'boss' && content.bossGhost) {
+      ensureAsset(content.bossGhost.file);
+    }
+  }
+
+  // 只预加载按钮；角色、鬼、鬼火、图鉴图片都改为用到时再加载。
+  ensureAsset('封印按钮.png');
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
@@ -291,6 +319,7 @@
           forced: win.forced,
           passTimer: 0
         };
+        warmContentAssets(state.content);
         return;
       }
     }
@@ -328,6 +357,7 @@
         talismans: []
       };
     }
+    warmContentAssets(state.content);
   }
 
   function ghostCountForRoom(room) {
@@ -1451,7 +1481,8 @@
       const x = cx + side * bodyH * (0.22 + layer * 0.08) + drift;
       const y = cy - bodyH * (0.04 + layer * 0.035) + bob;
       const size = bodyH * (0.14 + (i % 3) * 0.022);
-      const img = assets[GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]];
+      const fireFile = GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length];
+      const img = getAsset(fireFile);
       const pulse = 0.72 + Math.sin(state.t * 3.2 + i) * 0.15;
       ctx.globalAlpha = clamp(0.72 + pulse * 0.24, 0.58, 1);
       if (img && img.complete && img.naturalWidth) {
@@ -1482,7 +1513,7 @@
   }
 
   function drawCharacter(def, x, floorY, targetH, kind, scale = 1) {
-    const img = assets[def.file];
+    const img = getAsset(def.file);
     const h = targetH * scale * (def.scale || 1);
     const aspect = img && img.naturalWidth ? img.naturalWidth / img.naturalHeight : 0.62;
     const w = h * aspect;
@@ -1671,7 +1702,7 @@
   }
 
   function drawSealButton(r) {
-    const img = assets['封印按钮.png'];
+    const img = getAsset('封印按钮.png');
     ctx.save();
     if (img && img.complete && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
@@ -1917,7 +1948,7 @@
   }
 
   function drawCardImage(item, box, silhouette) {
-    const img = assets[item.file];
+    const img = getAsset(item.file);
     if (img && img.complete && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
       let drawH = box.h * 0.96;
