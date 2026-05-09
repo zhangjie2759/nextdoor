@@ -8,8 +8,8 @@
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.9.9'
-const GAME_VERSION_NOTE = '真实素材适配/门框比例/角色落地修正版'
+const GAME_VERSION = 'v0.10.0'
+const GAME_VERSION_NOTE = '图层顺序/门尺寸二次修正版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -103,12 +103,12 @@ const FRAME_OPENING = {
 
 // 这里是最重要的图层尺寸控制区，后续美术替换时优先调这里。
 const ART_LAYOUT = {
-  frameTop: 0.105,          // 最大门框距离屏幕顶部比例
-  frameHeight: 0.76,        // 最大门框高度比例
+  frameTop: 0.125,          // 最大门框距离屏幕顶部比例
+  frameHeight: 0.70,        // v0.10.0：整体门框略缩小，避免门太高
   maxFrameWidth: 0.92,      // v0.9.9：横屏/电脑预览时门框不能无限撑宽
   largeDoorSlide: 0.98,     // 最大门全开时，向左滑出多少个门洞宽度
   floorStart: 0.68,
-  innerFrameHeight: 0.34,   // 缩小门框高度，占门洞高度
+  innerFrameHeight: 0.31,   // v0.10.0：缩小内部门，避免深处门过大
   innerFrameY: 0.295,       // 缩小门框位置，越小越靠上/越深
   innerDoorInset: 0.12,
   roomWallDarkness: 0.16,   // 房间内图已偏暗，少压一点避免糊黑
@@ -1270,16 +1270,28 @@ function drawProceduralDoor(open, alpha = 1, darkness = 0) {
   ctx.restore()
 }
 
-function drawClosedDoorSet(frameRect, alpha = 1, darkness = 0) {
-  // 关键：小门和大门都使用同一套门框开口比例。
+function getDoorVisualRect(open) {
+  // v0.10.0：门板不再占满整个门洞高度，避免视觉上过高。
+  const y = open.y + open.h * ART_LAYOUT.doorVisualTop
+  const h = open.h * ART_LAYOUT.doorVisualScaleY
+  return { x: open.x, y, w: open.w, h }
+}
+
+function drawClosedDoorSet(frameRect, alpha = 1, darkness = 0, order = 'frameTop') {
+  // 小门和大门都使用同一套门框开口比例，但门框必须压在门上面。
   const open = getOpeningRect(frameRect)
+  const doorRect = getDoorVisualRect(open)
 
   ctx.save()
   ctx.globalAlpha = alpha
-  drawProceduralDoor(open, 1, darkness)
-  ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+
+  if (order === 'frameBottom') ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+
+  drawProceduralDoor(doorRect, 1, darkness)
+
+  if (order !== 'frameBottom') ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+
   if (darkness > 0) {
-    // 门框也跟着压暗，但不透明。
     ctx.fillStyle = `rgba(0,0,0,${darkness * 0.72})`
     ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
   }
@@ -1396,16 +1408,36 @@ function drawArtRoom(frameRect, options = {}) {
   } = options
 
   const open = getOpeningRect(frameRect)
+  const outerDoorBase = getDoorVisualRect(open)
 
-  // 先把门洞区域裁切，避免图层跑出门框。
+  // v0.10.0 图层顺序按照你的新要求调整：
+  // 最上层：门框 → 门 → 角色 → 房间内 → 小门 → 小门框。
+  // Canvas 实际绘制需要反过来：黑底 → 小门框 → 小门 → 房间内 → 角色 → 大门 → 大门框。
   clipRect(open, () => {
-    // 7. 黑底
     ctx.fillStyle = '#000'
     ctx.fillRect(open.x, open.y, open.w, open.h)
 
+    // 6. 小门框（最底层的空间门框）
+    const innerFrame = getInnerFrameRect(open, depthScale)
+    ctx.save()
+    ctx.globalAlpha = innerDoorAlpha
+    ctx.drawImage(ASSETS.frame, innerFrame.x, innerFrame.y, innerFrame.w, innerFrame.h)
+    if (ART_LAYOUT.innerDoorDarkness > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${ART_LAYOUT.innerDoorDarkness * 0.72})`
+      ctx.fillRect(innerFrame.x, innerFrame.y, innerFrame.w, innerFrame.h)
+    }
+    ctx.restore()
+
+    // 5. 小门，压在小门框上方。
+    const innerOpen = getOpeningRect(innerFrame)
+    const innerDoor = getDoorVisualRect(innerOpen)
+    ctx.save()
+    ctx.globalAlpha = innerDoorAlpha
+    drawProceduralDoor(innerDoor, 1, ART_LAYOUT.innerDoorDarkness)
+    ctx.restore()
+
+    // 4. 房间内，压在小门上方。这样小门只会在房间图的暗处/洞口区域露出来。
     if (SHOW_WALL_AND_FLOOR) {
-      // v0.9.6：门后空间改用你上传的「房间内.png」。
-      // 不再调用旧的 wall.png / floor.png，也不再把地板和墙壁拆成旧图层。
       drawImageCover(ASSETS.room || ASSETS.wall, open.x, open.y, open.w, open.h)
       if (ART_LAYOUT.roomWallDarkness > 0) {
         ctx.fillStyle = `rgba(0,0,0,${ART_LAYOUT.roomWallDarkness})`
@@ -1413,25 +1445,23 @@ function drawArtRoom(frameRect, options = {}) {
       }
     }
 
-    // 深处小门仍然保留，用于“下一间”的无限门转场。
-    drawInnerDoorSet(open, depthScale, innerDoorAlpha)
-
+    // 3. 角色，压在房间内上方。
     if (includeContent) drawRoomContent(open)
   })
 
-  // 2. 外层门框，使用中间透明处理后的 frame.png
-  ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-
-  // 1. 最大的门，放最后，保证它在最前景，并能盖住门后内容。
+  // 2. 最大门，位于角色上方。
   if (includeLargeDoor) {
     const slide = doorOpen * open.w * ART_LAYOUT.largeDoorSlide
-    const doorX = open.x - slide
+    const doorX = outerDoorBase.x - slide
     const doorAlpha = ghostEyeActive() ? 0.6 : 1
     ctx.save()
     ctx.globalAlpha = doorAlpha
-    drawProceduralDoor({ x: doorX, y: open.y, w: open.w, h: open.h }, 1, 0)
+    drawProceduralDoor({ x: doorX, y: outerDoorBase.y, w: outerDoorBase.w, h: outerDoorBase.h }, 1, 0)
     ctx.restore()
   }
+
+  // 1. 外层门框，最后画，永远压在大门和所有内容上方。
+  ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
 }
 
 function drawGhost(cx, cy, frameW, frameH) {
