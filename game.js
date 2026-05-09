@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.12';
+  const VERSION = 'v0.11.13';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -1882,18 +1882,7 @@
     if (seen) {
       drawCardImage(item, imageBox, false);
     } else {
-      drawCardImage(item, imageBox, true);
-      ctx.save();
-      ctx.globalAlpha = 1;
-      ctx.font = `900 ${Math.max(26, r.w * 0.32)}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = '#fffdf6';
-      ctx.fillStyle = '#111';
-      ctx.strokeText('?', r.x + r.w / 2, imageBox.y + imageBox.h * 0.50);
-      ctx.fillText('?', r.x + r.w / 2, imageBox.y + imageBox.h * 0.50);
-      ctx.restore();
+      drawUnknownEgg(imageBox, r.w);
     }
     ctx.restore();
 
@@ -1909,6 +1898,29 @@
     ctx.font = `${isEn() ? 9.5 : 10}px system-ui, -apple-system, sans-serif`;
     const desc = seen ? displayDesc(item) : ui('尚未记录', 'Not recorded yet');
     wrapText(desc, r.x + r.w / 2, r.y + r.h - (isEn() ? 52 : 38), r.w - 14, isEn() ? 11 : 12, 'center');
+    ctx.restore();
+  }
+
+  function drawUnknownEgg(box, cardW) {
+    ctx.save();
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h * 0.52;
+    const rx = Math.min(box.w * 0.24, box.h * 0.28);
+    const ry = Math.min(box.h * 0.32, box.w * 0.38);
+    ctx.fillStyle = '#111';
+    ctx.globalAlpha = 0.92;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.font = `900 ${Math.max(24, cardW * 0.30)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = '#fffdf6';
+    ctx.fillStyle = '#111';
+    ctx.strokeText('?', cx, cy);
+    ctx.fillText('?', cx, cy);
     ctx.restore();
   }
 
