@@ -1,27 +1,27 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.1';
+  const VERSION = 'v0.11.2';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0111_save';
+  const STORAGE_KEY = 'next_room_v0112_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
   const GHOSTS = [
-    { name: '猼訑', file: '猼訑.png', type: 'normal' },
-    { name: '赤鱬', file: '赤鱬.png', type: 'thin' },
-    { name: '当康', file: '当康.png', type: 'heavy' },
-    { name: '混沌', file: '混沌.png', type: 'heavy' },
-    { name: '九尾狐', file: '九尾狐.png', type: 'normal', ghostEye: true },
-    { name: '夔牛', file: '夔牛.png', type: 'heavy' },
-    { name: '麒麟', file: '麒麟.png', type: 'normal' },
-    { name: '穷奇', file: '穷奇.png', type: 'thin' },
-    { name: '饕餮', file: '饕餮.png', type: 'heavy' },
-    { name: '狰', file: '狰.png', type: 'normal' },
-    { name: '烛阴', file: '烛阴.png', type: 'thin' }
+    { name: '猼訑', file: '猼訑.png', type: 'normal', speed: 1.05, fire: 1 },
+    { name: '赤鱬', file: '赤鱬.png', type: 'thin', speed: 1.62, fire: 2 },
+    { name: '当康', file: '当康.png', type: 'heavy', speed: 0.86, fire: 2 },
+    { name: '混沌', file: '混沌.png', type: 'heavy', speed: 0.98, fire: 3 },
+    { name: '九尾狐', file: '九尾狐.png', type: 'normal', speed: 1.24, fire: 3, ghostEye: true },
+    { name: '夔牛', file: '夔牛.png', type: 'heavy', speed: 1.02, fire: 3 },
+    { name: '麒麟', file: '麒麟.png', type: 'normal', speed: 1.10, fire: 3 },
+    { name: '穷奇', file: '穷奇.png', type: 'thin', speed: 1.78, fire: 4 },
+    { name: '饕餮', file: '饕餮.png', type: 'heavy', speed: 1.12, fire: 5 },
+    { name: '狰', file: '狰.png', type: 'normal', speed: 1.36, fire: 4 },
+    { name: '烛阴', file: '烛阴.png', type: 'thin', speed: 1.92, fire: 5 }
   ];
 
   const PEOPLE = Array.from({ length: 10 }, (_, i) => ({
@@ -54,6 +54,7 @@
     danger: 0,
     sealFlash: 0,
     transition: 0,
+    transitionFadeContent: true,
     pendingNextRoom: 2,
     resultReason: '',
     ghostEye: 0,
@@ -131,55 +132,42 @@
   resize();
 
   function computeLayout(w, h) {
-    const topH = Math.max(70, Math.min(88, h * 0.092));
-    const bottomH = Math.max(108, Math.min(132, h * 0.145));
+    const topH = Math.max(78, Math.min(94, h * 0.10));
+    const bottomH = Math.max(112, Math.min(136, h * 0.145));
     const gameTop = topH;
     const gameBottom = h - bottomH;
     const gameH = gameBottom - gameTop;
 
-    const outerH = clamp(Math.min(gameH * 0.82, w * 1.26, 620), 360, 620);
-    const outerW = outerH * 0.68;
-    const outerX = (w - outerW) / 2;
-    const outerY = gameTop + Math.max(18, (gameH - outerH) * 0.40);
+    const doorH = clamp(Math.min(gameH * 0.84, w * 1.32, 640), 380, 640);
+    const doorW = doorH * 0.66;
+    const doorX = (w - doorW) / 2;
+    const doorY = gameTop + Math.max(16, (gameH - doorH) * 0.38);
 
-    const frameThickness = clamp(outerW * 0.048, 10, 18);
-    const panelInset = Math.max(4, frameThickness * 0.38);
-    const bigHole = { x: outerX, y: outerY, w: outerW, h: outerH, frameThickness };
-    const bigDoor = {
-      x: outerX + panelInset,
-      y: outerY + panelInset,
-      w: outerW - panelInset * 2,
-      h: outerH - panelInset * 2
-    };
+    const bigHole = { x: doorX, y: doorY, w: doorW, h: doorH };
+    const bigDoor = { x: doorX, y: doorY, w: doorW, h: doorH };
 
     const smallScale = 0.36;
-    const smallOuterW = outerW * smallScale;
-    const smallOuterH = outerH * smallScale;
-    const smallX = (w - smallOuterW) / 2;
-    const smallY = outerY + outerH * 0.21;
-    const smallFrameThickness = Math.max(4, frameThickness * smallScale);
-    const smallPanelInset = Math.max(2, panelInset * smallScale);
-    const smallHole = { x: smallX, y: smallY, w: smallOuterW, h: smallOuterH, frameThickness: smallFrameThickness };
     const smallDoor = {
-      x: smallX + smallPanelInset,
-      y: smallY + smallPanelInset,
-      w: smallOuterW - smallPanelInset * 2,
-      h: smallOuterH - smallPanelInset * 2
+      w: doorW * smallScale,
+      h: doorH * smallScale,
+      x: (w - doorW * smallScale) / 2,
+      y: doorY + doorH * 0.21
     };
+    const smallHole = { ...smallDoor };
     const smallWall = {
-      x: smallHole.x - smallOuterW * 0.42,
-      y: smallHole.y - smallOuterH * 0.12,
-      w: smallHole.w + smallOuterW * 0.84,
-      h: smallHole.h + smallOuterH * 0.24
+      x: smallHole.x - smallHole.w * 0.42,
+      y: smallHole.y - smallHole.h * 0.12,
+      w: smallHole.w * 1.84,
+      h: smallHole.h * 1.24
     };
 
     return {
       w, h, topH, bottomH, gameTop, gameBottom, gameH,
-      frameThickness,
       bigDoor, bigHole, smallDoor, smallHole, smallWall,
       home: { x: 10, y: 16, w: 64, h: 36 },
-      sealButton: { x: w / 2 - 76, y: h - 96, w: 152, h: 66 },
-      bossButton: { x: w / 2 - 126, y: h - 104, w: 252, h: 74 }
+      galleryButton: { x: w - 86, y: 16, w: 76, h: 36 },
+      sealButton: { x: w / 2 - 88, y: h - 108, w: 176, h: 82 },
+      bossButton: { x: w / 2 - 132, y: h - 108, w: 264, h: 76 }
     };
   }
 
@@ -200,6 +188,7 @@
     state.danger = 0;
     state.sealFlash = 0;
     state.transition = 0;
+    state.transitionFadeContent = true;
     state.pendingNextRoom = 2;
     state.resultReason = '';
     state.ghostEye = 0;
@@ -224,6 +213,31 @@
     return BOSS_CONFIGS[Math.min(stage, BOSS_CONFIGS.length) - 1] || { stage, time: 5.5, seals: 30 };
   }
 
+
+  function bossGhostForStage(stage) {
+    return GHOSTS[(stage * 2 + 6) % GHOSTS.length];
+  }
+
+  function currentStageProgress(room = state.room) {
+    const stage = bossStageForRoom(room);
+    const index = ((room - 1) % 25) + 1;
+    return { stage, index, ratio: index / 25, boss: bossGhostForStage(stage) };
+  }
+
+  function ghostDangerSpeed(g) {
+    const typeBoost = g.type === 'thin' ? 1.18 : g.type === 'heavy' ? 0.92 : 1;
+    return (g.speed || 1) * typeBoost;
+  }
+
+  function ghostApproachStep() {
+    const raw = clamp(state.danger, 0, 1);
+    const steps = 7;
+    const index = Math.floor(raw * steps);
+    const local = raw * steps - index;
+    const kick = Math.sin(local * Math.PI) * 0.055;
+    return clamp(index / steps + kick, 0, 1);
+  }
+
   function createContent() {
     const room = state.room;
     const win = bossWindow(room);
@@ -238,7 +252,7 @@
     if (win.active && !state.bossDefeated[win.stage]) {
       const chance = win.forced ? 1 : (0.26 + (room - win.start) * 0.11);
       if (Math.random() < chance) {
-        const bossGhost = GHOSTS[(win.stage * 2 + 6) % GHOSTS.length];
+        const bossGhost = bossGhostForStage(win.stage);
         state.content = {
           type: 'boss',
           stage: win.stage,
@@ -351,14 +365,15 @@
     if (state.mode === 'sealSuccess') {
       state.sealFlash += dt;
       if (state.sealFlash >= 0.72) {
-        startAdvance({ toRoom: state.pendingNextRoom });
+        if (state.content && state.content.talismans) state.content.talismans = [];
+        startAdvance({ toRoom: state.pendingNextRoom, fadeContent: true });
       }
       return;
     }
 
     if (state.snapTarget !== null && !state.draggingDoor && state.mode === 'normal') {
       const direction = state.snapTarget > state.door ? 1 : -1;
-      const speed = 0.92;
+      const speed = 1.85;
       state.door += direction * speed * dt;
       if ((direction > 0 && state.door >= state.snapTarget) || (direction < 0 && state.door <= state.snapTarget)) {
         state.door = state.snapTarget;
@@ -379,12 +394,12 @@
 
     if (c.type === 'ghost') {
       if (state.door > 0.055) {
-        const base = 0.115 + state.room * 0.0024;
-        const multi = c.ghosts.length > 1 ? 1 + (c.ghosts.length - 1) * 0.22 : 1;
-        const thinBoost = c.ghosts.some(g => g.type === 'thin') ? 1.16 : 1;
-        const easySlow = state.difficulty === 'easy' && c.ghosts.some(g => g.type === 'thin') ? 0.64 : 1;
-        const openFactor = 0.65 + state.door * 0.65;
-        state.danger += dt * base * multi * thinBoost * easySlow * openFactor;
+        const base = 0.30 + Math.min(state.room, 90) * 0.0038;
+        const speediest = Math.max(...c.ghosts.map(ghostDangerSpeed));
+        const multi = 1 + (c.ghosts.length - 1) * 0.28;
+        const easySlow = state.difficulty === 'easy' && c.ghosts.some(g => g.type === 'thin') ? 0.72 : 1;
+        const openFactor = 0.72 + state.door * 0.76;
+        state.danger += dt * base * speediest * multi * easySlow * openFactor;
       } else {
         state.danger = 0;
       }
@@ -427,6 +442,7 @@
   function startAdvance(opts = {}) {
     state.mode = 'transition';
     state.transition = 0;
+    state.transitionFadeContent = opts.fadeContent !== false;
     state.pendingNextRoom = opts.toRoom || state.room + 1;
     state.draggingDoor = false;
     state.snapTarget = null;
@@ -438,6 +454,7 @@
   function finishAdvance() {
     state.room = state.pendingNextRoom;
     state.transition = 0;
+    state.transitionFadeContent = true;
     createContent();
   }
 
@@ -562,6 +579,11 @@
       state.draggingDoor = false;
       return;
     }
+    if (hit(p, l.galleryButton)) {
+      state.screen = 'gallery';
+      state.draggingDoor = false;
+      return;
+    }
 
     if (state.mode === 'bossFight') {
       if (hit(p, l.bossButton)) handleBossSealClick();
@@ -597,7 +619,7 @@
     e.preventDefault();
     const l = state.layout;
     const dx = state.dragStartX - p.x;
-    state.door = clamp(state.dragStartDoor + dx / (l.bigDoor.w * 0.82), 0, 1);
+    state.door = clamp(state.dragStartDoor + dx / (l.bigDoor.w * 0.58), 0, 1);
   }
 
   function onPointerUp(e) {
@@ -907,7 +929,7 @@
   function drawWallWithHole(wall, hole, opts = {}) {
     const fill = opts.fill || '#fffdf6';
     const stroke = opts.stroke || 4;
-    const radius = opts.radius || 12;
+    const radius = opts.radius || 13;
     ctx.save();
     ctx.fillStyle = fill;
     ctx.strokeStyle = '#111';
@@ -918,59 +940,54 @@
     ctx.fillRect(hole.x, wall.y, hole.w, Math.max(0, hole.y - wall.y));
     ctx.fillRect(hole.x, hole.y + hole.h, hole.w, Math.max(0, wall.y + wall.h - (hole.y + hole.h)));
 
+    // 这里只保留墙洞的黑色切边，不再做额外门框。
     roundRect(hole.x, hole.y, hole.w, hole.h, radius, false, true, stroke);
-
-    ctx.globalAlpha = 0.18;
-    ctx.fillStyle = '#111';
-    roundRect(hole.x + stroke * 0.48, hole.y + stroke * 0.48, hole.w - stroke * 0.96, hole.h - stroke * 0.96, Math.max(6, radius - 3), true, false, 0);
     ctx.restore();
   }
 
   function drawDoorPanel(door, progress, opts = {}) {
     const alpha = opts.alpha ?? doorAlphaForGhostEye();
-    const slide = door.w * 0.92 * progress;
+    const slide = door.w * 0.96 * progress;
     const x = door.x - slide;
     const y = door.y;
     const w = door.w;
     const h = door.h;
     const strokeW = opts.big ? 6 : 3.2;
-    const inset = Math.max(8, w * 0.048);
-    const handleW = Math.max(10, w * 0.05);
-    const handleH = h * 0.18;
+    const inset = Math.max(10, w * 0.055);
+    const handleW = Math.max(9, w * 0.046);
+    const handleH = h * 0.20;
 
     ctx.save();
     ctx.globalAlpha = alpha;
 
-    const shadow = ctx.createLinearGradient(x, y, x + w, y);
-    shadow.addColorStop(0, '#efe8d5');
-    shadow.addColorStop(0.12, '#f7f1df');
-    shadow.addColorStop(0.84, '#fcf7ea');
-    shadow.addColorStop(1, '#e8dfc8');
-    ctx.fillStyle = shadow;
+    const body = ctx.createLinearGradient(x, y, x + w, y);
+    body.addColorStop(0, '#ebe2cc');
+    body.addColorStop(0.12, '#f5eedc');
+    body.addColorStop(0.78, '#fff9ea');
+    body.addColorStop(1, '#e6dcc4');
+    ctx.fillStyle = body;
     ctx.strokeStyle = '#111';
     ctx.lineWidth = strokeW;
-    roundRect(x, y, w, h, 16, true, true, strokeW);
+    roundRect(x, y, w, h, 15, true, true, strokeW);
 
-    ctx.lineWidth = Math.max(2, strokeW * 0.56);
-    roundRect(x + inset, y + inset, w - inset * 2, h - inset * 2, 11, false, true, ctx.lineWidth);
+    // 门板结构：不再画中间竖线，只保留内框和拉手，保持滑门整体感。
+    ctx.lineWidth = Math.max(2, strokeW * 0.48);
+    ctx.globalAlpha = alpha * 0.9;
+    roundRect(x + inset, y + inset, w - inset * 2, h - inset * 2, 10, false, true, ctx.lineWidth);
 
-    const splitX = x + w * 0.52;
-    ctx.beginPath();
-    ctx.moveTo(splitX, y + inset + 4);
-    ctx.lineTo(splitX, y + h - inset - 4);
-    ctx.stroke();
-
-    ctx.globalAlpha = alpha * 0.22;
+    ctx.globalAlpha = alpha * 0.18;
     ctx.fillStyle = '#ffffff';
-    roundRect(x + inset * 0.9, y + inset * 0.9, w * 0.18, h - inset * 1.8, 10, true, false, 0);
+    roundRect(x + inset * 0.85, y + inset * 0.85, w * 0.18, h - inset * 1.7, 10, true, false, 0);
     ctx.globalAlpha = alpha;
 
-    const handleX = x + w - inset * 1.15 - handleW;
+    const handleX = x + w - inset * 1.25 - handleW;
     const handleY = y + h * 0.5 - handleH / 2;
-    roundRect(handleX, handleY, handleW, handleH, 6, false, true, Math.max(2, strokeW * 0.44));
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = Math.max(2.2, strokeW * 0.42);
+    roundRect(handleX, handleY, handleW, handleH, 6, false, true, ctx.lineWidth);
     ctx.beginPath();
-    ctx.moveTo(handleX + handleW * 0.45, handleY + handleH * 0.2);
-    ctx.lineTo(handleX + handleW * 0.45, handleY + handleH * 0.8);
+    ctx.moveTo(handleX + handleW * 0.48, handleY + handleH * 0.20);
+    ctx.lineTo(handleX + handleW * 0.48, handleY + handleH * 0.80);
     ctx.stroke();
 
     ctx.restore();
@@ -983,7 +1000,7 @@
 
   function actualDoorRect() {
     const d = state.layout.bigDoor;
-    const x = d.x - d.w * 0.92 * state.door;
+    const x = d.x - d.w * 0.96 * state.door;
     return { x, y: d.y, w: d.w, h: d.h };
   }
 
@@ -1011,8 +1028,12 @@
     const l = state.layout;
     const door = l.bigDoor;
     const floorY = door.y + door.h * 0.89;
+    const contentAlpha = state.mode === 'transition' && state.transitionFadeContent
+      ? clamp(1 - state.transition * 1.35, 0, 1)
+      : 1;
 
     ctx.save();
+    ctx.globalAlpha *= contentAlpha;
     ctx.beginPath();
     ctx.rect(l.bigHole.x, l.bigHole.y, l.bigHole.w, l.bigHole.h);
     ctx.clip();
@@ -1023,15 +1044,21 @@
       drawCharacter(c.person, door.x + door.w / 2, floorY, door.h * 0.58, 'person', 1);
     } else if (c.type === 'ghost') {
       const count = c.ghosts.length;
-      const dangerScale = 1 + state.danger * 0.42;
-      const baseH = door.h * (count === 1 ? 0.59 : count === 2 ? 0.49 : 0.40);
+      const approach = ghostApproachStep();
+      const dangerScale = 1 + approach * 0.68;
+      const baseH = door.h * (count === 1 ? 0.58 : count === 2 ? 0.48 : 0.39);
       const spread = door.w * (count === 1 ? 0 : count === 2 ? 0.25 : 0.28);
       c.ghosts.forEach((g, i) => {
         const offset = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
-        drawCharacter(g, door.x + door.w / 2 + offset, floorY, baseH, 'ghost', dangerScale);
+        const gx = door.x + door.w / 2 + offset;
+        const gh = baseH * dangerScale;
+        drawGhostFires(g, gx, floorY - gh * 0.58, gh, g.fire || 1, i);
+        drawCharacter(g, gx, floorY, baseH, 'ghost', dangerScale);
       });
     } else if (c.type === 'boss') {
-      const scale = state.mode === 'bossFight' ? 1 + state.door * 0.32 : 1;
+      const approach = state.mode === 'bossFight' ? Math.floor(state.door * 8) / 8 : 0;
+      const scale = state.mode === 'bossFight' ? 1 + approach * 0.45 : 1;
+      drawGhostFires(c.bossGhost, door.x + door.w / 2, floorY - door.h * 0.52, door.h * 0.80, (c.bossGhost.fire || 3) + 2, 9);
       drawCharacter(c.bossGhost, door.x + door.w / 2, floorY + door.h * 0.04, door.h * 0.76, 'boss', scale);
     }
     ctx.restore();
@@ -1048,6 +1075,49 @@
     ctx.moveTo(cx - hole.w * 0.22, y);
     ctx.quadraticCurveTo(cx, y + 20, cx + hole.w * 0.22, y);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawGhostFires(def, cx, cy, bodyH, count, seed = 0) {
+    ctx.save();
+    const base = GHOSTS.findIndex(g => g.name === def.name);
+    const safeSeed = base >= 0 ? base : seed;
+    const max = clamp(count, 1, 7);
+    for (let i = 0; i < max; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const layer = Math.floor(i / 2);
+      const drift = Math.sin(state.t * (1.1 + i * 0.17) + safeSeed * 0.9 + i) * bodyH * 0.035;
+      const bob = Math.sin(state.t * (1.7 + i * 0.23) + i * 1.8) * bodyH * 0.045;
+      const x = cx + side * bodyH * (0.22 + layer * 0.08) + drift;
+      const y = cy - bodyH * (0.04 + layer * 0.035) + bob;
+      const size = bodyH * (0.105 + (i % 3) * 0.018);
+      const img = assets[GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]];
+      const pulse = 0.72 + Math.sin(state.t * 3.2 + i) * 0.15;
+      ctx.globalAlpha = clamp(0.42 + pulse * 0.28, 0.32, 0.82);
+      if (img && img.naturalWidth) {
+        ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
+      } else {
+        drawCodeGhostFire(x, y, size, pulse);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawCodeGhostFire(x, y, size, pulse) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(1, 1 + pulse * 0.15);
+    const g = ctx.createRadialGradient(0, 0, size * 0.05, 0, 0, size * 0.72);
+    g.addColorStop(0, 'rgba(255,255,220,0.95)');
+    g.addColorStop(0.34, 'rgba(95,255,160,0.72)');
+    g.addColorStop(1, 'rgba(35,220,120,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.78);
+    ctx.bezierCurveTo(size * 0.45, -size * 0.28, size * 0.38, size * 0.32, 0, size * 0.48);
+    ctx.bezierCurveTo(-size * 0.42, size * 0.18, -size * 0.40, -size * 0.28, 0, -size * 0.78);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   }
 
@@ -1108,24 +1178,26 @@
   }
 
   function drawSealPaper(x, y, w, h, rot, alpha) {
-    const img = assets['封印按钮.png'];
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(rot);
     ctx.globalAlpha = alpha;
-    if (img && img.naturalWidth) {
-      ctx.drawImage(img, -w / 2, -h / 2, w, h);
-    } else {
-      ctx.fillStyle = '#fff06d';
-      ctx.strokeStyle = '#111';
-      ctx.lineWidth = 3;
-      roundRect(-w / 2, -h / 2, w, h, 6, true, true, 3);
-      ctx.fillStyle = '#111';
-      ctx.font = `900 ${Math.max(12, h * 0.38)}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('封', 0, 0);
-    }
+    const ww = Math.max(w * 0.72, 34);
+    const hh = Math.max(h * 1.12, 72);
+    ctx.fillStyle = '#f7d85a';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 3;
+    roundRect(-ww / 2, -hh / 2, ww, hh, 5, true, true, 3);
+    ctx.strokeStyle = '#b11616';
+    ctx.lineWidth = 2;
+    roundRect(-ww / 2 + 5, -hh / 2 + 6, ww - 10, hh - 12, 3, false, true, 2);
+    ctx.fillStyle = '#b11616';
+    ctx.font = `900 ${Math.max(18, ww * 0.48)}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('封', 0, -hh * 0.20);
+    ctx.font = `900 ${Math.max(14, ww * 0.36)}px serif`;
+    ctx.fillText('印', 0, hh * 0.18);
     ctx.restore();
   }
 
@@ -1159,6 +1231,7 @@
 
   function drawTopUI() {
     const l = state.layout;
+    const prog = currentStageProgress();
     ctx.save();
     ctx.fillStyle = '#fffdf6';
     ctx.fillRect(0, 0, l.w, l.topH);
@@ -1170,23 +1243,35 @@
     ctx.stroke();
 
     drawMiniButton(l.home, '主页');
+    drawMiniButton(l.galleryButton, '图鉴');
 
     ctx.fillStyle = '#111';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = '900 17px system-ui, -apple-system, sans-serif';
-    ctx.fillText(`第 ${state.room} 间`, 86, 24);
-    ctx.font = '700 12px system-ui, -apple-system, sans-serif';
+    ctx.font = '900 16px system-ui, -apple-system, sans-serif';
+    ctx.fillText(`第 ${state.room} 间`, 86, 20);
+    ctx.font = '700 11px system-ui, -apple-system, sans-serif';
     const diff = state.difficulty === 'easy' ? '简单' : '困难';
-    ctx.fillText(`难度 ${diff}`, 86, 48);
+    ctx.fillText(`难度 ${diff}  最高 ${state.save.bestRoom || 1}`, 86, 40);
+    ctx.fillText(`进度 ${prog.index}/25  Boss：${prog.boss.name}`, 86, 58);
+
+    const barX = 86;
+    const barY = l.topH - 13;
+    const barW = Math.max(80, l.w - 188);
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 2;
+    roundRect(barX, barY, barW, 6, 3, true, true, 2);
+    ctx.fillStyle = '#111';
+    roundRect(barX, barY, barW * prog.ratio, 6, 3, true, false, 0);
 
     ctx.textAlign = 'right';
-    ctx.font = '800 12px system-ui, -apple-system, sans-serif';
-    ctx.fillText(`纪录 ${state.save.bestRoom || 1}`, l.w - 12, 22);
-    ctx.fillText(`图鉴 ${collectCountText()}`, l.w - 12, 43);
+    ctx.font = '700 10px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = '#111';
+    ctx.fillText(collectCountText(), l.w - 10, 61);
     if (state.ghostEye > 0) {
-      ctx.fillStyle = '#111';
-      ctx.fillText(`鬼眼 ${Math.ceil(state.ghostEye)}s`, l.w - 12, 63);
+      ctx.font = '800 11px system-ui, -apple-system, sans-serif';
+      ctx.fillText(`鬼眼 ${Math.ceil(state.ghostEye)}s`, l.w - 10, l.topH - 16);
     }
 
     if (state.mode === 'bossFight' && state.content && state.content.type === 'boss') {
@@ -1200,7 +1285,7 @@
     const c = state.content;
     const ratio = clamp(1 - c.hits / c.cfg.seals, 0, 1);
     const x = 86;
-    const y = l.topH - 16;
+    const y = l.topH - 24;
     const w = l.w - 172;
     const h = 9;
     ctx.save();
@@ -1229,18 +1314,27 @@
     const img = assets['封印按钮.png'];
     ctx.save();
     if (img && img.naturalWidth) {
-      ctx.drawImage(img, r.x, r.y, r.w, r.h);
+      const aspect = img.naturalWidth / img.naturalHeight;
+      let drawH = r.h;
+      let drawW = drawH * aspect;
+      if (drawW > r.w) {
+        drawW = r.w;
+        drawH = drawW / aspect;
+      }
+      const x = r.x + (r.w - drawW) / 2;
+      const y = r.y + (r.h - drawH) / 2;
+      ctx.drawImage(img, x, y, drawW, drawH);
+    } else {
+      ctx.fillStyle = '#fff06d';
       ctx.strokeStyle = '#111';
       ctx.lineWidth = 4;
-      roundRect(r.x, r.y, r.w, r.h, 16, false, true, 4);
-    } else {
-      drawUIButton(r, '封 印');
+      roundRect(r.x, r.y, r.w, r.h, 15, true, true, 4);
+      ctx.fillStyle = '#111';
+      ctx.font = '900 25px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('封 印', r.x + r.w / 2, r.y + r.h / 2);
     }
-    ctx.fillStyle = '#111';
-    ctx.font = '900 25px system-ui, -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('封 印', r.x + r.w / 2, r.y + r.h / 2);
     ctx.restore();
   }
 
