@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.13';
+  const VERSION = 'v0.11.15';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -402,11 +402,9 @@
     }
 
     if (state.mode === 'personFade') {
-      const fadeSpeed = state.difficulty === 'normal' ? 2.05 : 1.55;
-      state.personFade += dt * fadeSpeed;
-      if (state.personFade >= 1) {
-        startAdvance({ toRoom: state.room + 1, fadeContent: false });
-      }
+      // 旧版会先让人物单独消失，再进入下一间，节奏会拖。
+      // 现在人物消失统一交给 transition 处理，和门洞放大共用同一个进度。
+      startAdvance({ toRoom: state.room + 1, fadeContent: true });
       return;
     }
 
@@ -450,13 +448,7 @@
       if (state.door >= 0.92) {
         c.passTimer += dt;
         if (c.passTimer > 0.22) {
-          if (c.type === 'person') {
-            state.mode = 'personFade';
-            state.personFade = 0;
-            state.snapTarget = null;
-          } else {
-            startAdvance({ toRoom: state.room + 1 });
-          }
+          startAdvance({ toRoom: state.room + 1, fadeContent: c.type === 'person' });
         }
       } else {
         c.passTimer = 0;
@@ -848,8 +840,8 @@
     ctx.fillStyle = '#fffdf6';
     roundRect(l.w / 2 - 138, l.h * 0.18, 276, 126, 24, true, true, 5);
     ctx.fillStyle = '#111';
-    ctx.font = en ? '900 44px system-ui, -apple-system, sans-serif' : '900 54px system-ui, -apple-system, sans-serif';
-    ctx.fillText(en ? 'NEXT ROOM' : '下一间', l.w / 2, l.h * 0.24);
+    ctx.font = en ? '900 34px system-ui, -apple-system, sans-serif' : '900 45px system-ui, -apple-system, sans-serif';
+    ctx.fillText(en ? 'TIMID EXORCIST' : '胆小除魔师', l.w / 2, l.h * 0.24);
     ctx.font = '700 15px system-ui, -apple-system, sans-serif';
     ctx.fillText(en ? 'Open. Observe. Decide.' : '开门一秒，识别异常', l.w / 2, l.h * 0.305);
     ctx.font = '700 13px system-ui, -apple-system, sans-serif';
@@ -1098,8 +1090,8 @@
     drawInteriorPerspective(bigHole, innerWall);
     if (state.transitionFadeContent) {
       ctx.save();
-      ctx.globalAlpha = clamp(1 - t * 1.45, 0, 1);
-      drawContentBehindDoor(bigDoor, bigHole);
+      // 人物/内容淡出和门洞放大使用同一个 eased transition 进度，避免先消失再放大。
+      drawContentBehindDoor(bigDoor, bigHole, { transitionFade: clamp(1 - t, 0, 1) });
       ctx.restore();
     }
     drawBigWall(bigHole);
@@ -1395,15 +1387,15 @@
     ctx.restore();
   }
 
-  function drawContentBehindDoor(doorArg, holeArg) {
+  function drawContentBehindDoor(doorArg, holeArg, opts = {}) {
     const c = state.content;
     if (!c) return;
     const l = state.layout;
     const door = doorArg || l.bigDoor;
     const hole = holeArg || l.bigHole;
     const floorY = door.y + door.h * 0.96;
-    let contentAlpha = state.mode === 'transition' && state.transitionFadeContent
-      ? clamp(1 - state.transition * 1.15, 0, 1)
+    let contentAlpha = typeof opts.transitionFade === 'number'
+      ? opts.transitionFade
       : 1;
     if (state.mode === 'personFade' && c.type === 'person') {
       contentAlpha *= clamp(1 - state.personFade, 0, 1);
