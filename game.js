@@ -2276,23 +2276,19 @@ loop()
 setTimeout(() => {
   console.log('===== IMAGE DEBUG START =====');
 
-  const pools = [
-    ['LOADED_IMAGES', typeof LOADED_IMAGES !== 'undefined' ? LOADED_IMAGES : null],
-    ['images', typeof images !== 'undefined' ? images : null],
-    ['ASSETS', typeof ASSETS !== 'undefined' ? ASSETS : null],
-    ['loadedImages', typeof loadedImages !== 'undefined' ? loadedImages : null],
-  ];
+  console.log('--- ASSETS ---');
+  Object.entries(ASSETS).forEach(([key, img]) => {
+    if (img) console.log(key, img.src, img.naturalWidth, img.naturalHeight);
+  });
 
-  pools.forEach(([poolName, pool]) => {
-    if (!pool) return;
-    console.log('POOL:', poolName);
+  console.log('--- GHOSTS ---');
+  Object.entries(CHARACTER_ASSETS.ghosts).forEach(([key, img]) => {
+    if (img) console.log(key, img.src, img.naturalWidth, img.naturalHeight);
+  });
 
-    Object.entries(pool).forEach(([key, img]) => {
-      if (!img) return;
-      if (img instanceof HTMLImageElement) {
-        console.log(key, img.src, img.naturalWidth, img.naturalHeight);
-      }
-    });
+  console.log('--- PEOPLE ---');
+  Object.entries(CHARACTER_ASSETS.people).forEach(([key, img]) => {
+    if (img) console.log(key, img.src, img.naturalWidth, img.naturalHeight);
   });
 
   console.log('===== IMAGE DEBUG END =====');
