@@ -2274,22 +2274,28 @@ loadAssets()
 
 loop()
 setTimeout(() => {
-  console.log('===== IMAGE DEBUG START =====');
+  console.log('===== CHARACTER IMAGE DEBUG START =====');
 
-  console.log('--- ASSETS ---');
-  Object.entries(ASSETS).forEach(([key, img]) => {
-    if (img) console.log(key, img.src, img.naturalWidth, img.naturalHeight);
+  const testFiles = [
+    '1号人物.png','2号人物.png','3号人物.png','4号人物.png','5号人物.png',
+    '6号人物.png','7号人物.png','8号人物.png','9号人物.png','10号人物.png',
+
+    '猼訑.png','赤鱬.png','当康.png','混沌.png','九尾狐.png',
+    '夔牛.png','麒麟.png','穷奇.png','饕餮.png','狰.png','烛阴.png',
+
+    '鬼火1.png','鬼火2.png','鬼火3.png','鬼火4.png','鬼火5.png'
+  ];
+
+  testFiles.forEach((src) => {
+    const img = new Image();
+    img.onload = () => {
+      console.log(src, img.naturalWidth, img.naturalHeight);
+    };
+    img.onerror = () => {
+      console.log('加载失败:', src);
+    };
+    img.src = src;
   });
 
-  console.log('--- GHOSTS ---');
-  Object.entries(CHARACTER_ASSETS.ghosts).forEach(([key, img]) => {
-    if (img) console.log(key, img.src, img.naturalWidth, img.naturalHeight);
-  });
-
-  console.log('--- PEOPLE ---');
-  Object.entries(CHARACTER_ASSETS.people).forEach(([key, img]) => {
-    if (img) console.log(key, img.src, img.naturalWidth, img.naturalHeight);
-  });
-
-  console.log('===== IMAGE DEBUG END =====');
-}, 3000);
+  console.log('===== CHARACTER IMAGE DEBUG END =====');
+}, 1000);
