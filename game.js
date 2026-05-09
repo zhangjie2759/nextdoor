@@ -2273,3 +2273,10 @@ loadAssets()
   })
 
 loop()
+function debugImageInfo() {
+  Object.entries(IMAGES).forEach(([key, img]) => {
+    if (!img) return;
+    console.log(key, img.src, img.naturalWidth, img.naturalHeight);
+  });
+}
+setTimeout(debugImageInfo, 2000);
