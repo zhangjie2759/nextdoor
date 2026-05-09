@@ -1,19 +1,32 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>下一间</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>下一间 v0.11.0</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #f7f3e8;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #f7f3e8;
+      touch-action: none;
+    }
+  </style>
 </head>
 <body>
-  <canvas id="game"></canvas>
-  <script>
-    // 固定版入口：以后一般只需要替换 game.js。
-    // 每次打开都会读取最新 game.js，避免 GitHub Pages / 浏览器缓存旧代码。
-    const s = document.createElement('script');
-    s.src = 'game.js?v=' + Date.now();
-    document.body.appendChild(s);
-  </script>
+  <canvas id="gameCanvas"></canvas>
+  <script src="game.js?v=0.11.0"></script>
 </body>
 </html>
