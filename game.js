@@ -8,8 +8,8 @@
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.10.1'
-const GAME_VERSION_NOTE = '图层顺序/门尺寸二次修正版'
+const GAME_VERSION = 'v0.10.2'
+const GAME_VERSION_NOTE = '代码生成门/墙/无限空间版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -37,15 +37,12 @@ const DIFFICULTY = {
 // ===== 图片资源 =====
 // v0.9.6：改为直接调用你上传在仓库根目录的素材，不再调用 根目录新素材 里的旧素材。
 const ASSET_PATHS = {
-  frame: '门框.png',          // 外层 / 内层门框
-  frameRaw: '门框.png',       // 菜单背景备份
-  room: '房间内.png',         // 门后的房间空间
-  wall: '房间内.png',         // 兼容旧变量，不再调用旧 wall.png
-  floor: '房间内.png',        // 兼容旧变量，不再调用旧 floor.png
-  door: '门.png',             // 原始门图保留加载；实际门板改为代码复刻，避免尺寸不适配
-  sealButton: '封印按钮.png'  // 封印按钮 / 符咒贴图
+  // v0.10.2：不再调用门、门框、房间内素材。
+  // 现在只保留可替换的按钮/符咒素材；门、墙、房间、小门全部由代码生成。
+  sealButton: '封印按钮.png'
 }
 
+// ===== 角色资源槽位
 // ===== 角色资源槽位 =====
 // v0.9.6：根据你当前上传的根目录图片建立映射。
 // 鬼图鉴按首批山海经阵容排序；缺图不会报错，缺图槽位不会参与随机。
@@ -85,50 +82,41 @@ let SEEN_GHOST_IDS = new Set()
 let SEEN_PERSON_IDS = new Set()
 let codexTab = 'ghosts' // ghosts / people
 
-// 门框原图里“门洞”的位置比例。
-// 这组参数决定：门、墙壁、地板、鬼，都会被放进这个洞口里。
-// v0.9.9：按你实际上传素材尺寸修正。
-// 门框.png = 941 × 1672，所以所有门框 / 内部门框都用这个真实比例。
-const FRAME_SOURCE = { w: 941, h: 1672 }
+// ===== 代码生成空间尺寸规范 =====
+// v0.10.2：门、门框、房间、大门墙、小门墙全部由代码生成。
+// 后续你按这些比例制作素材，就可以精准替换，不再盲猜图片尺寸。
+const FRAME_SOURCE = { w: 720, h: 1120 }
 const FRAME_ASPECT = FRAME_SOURCE.w / FRAME_SOURCE.h
 
-// 门框图里的门洞区域。这里决定门、房间、角色都放在哪个洞口里。
-// 这组数值已按 941×1672 的新门框素材重新估算，避免门洞偏移和拉伸。
+// 外层门洞在整张“门墙”中的比例。
+// 这就是未来你做门框/墙面素材时最重要的裁切标准。
 const FRAME_OPENING = {
-  x: 0.105,
-  y: 0.145,
-  w: 0.790,
-  h: 0.770
+  x: 0.165,
+  y: 0.225,
+  w: 0.670,
+  h: 0.565
 }
 
-// 这里是最重要的图层尺寸控制区，后续美术替换时优先调这里。
 const ART_LAYOUT = {
-  frameTop: 0.125,          // 最大门框距离屏幕顶部比例
-  frameHeight: 0.70,        // v0.10.0：整体门框略缩小，避免门太高
-  maxFrameWidth: 0.92,      // v0.9.9：横屏/电脑预览时门框不能无限撑宽
-  largeDoorSlide: 0.98,     // 最大门全开时，向左滑出多少个门洞宽度
-  floorStart: 0.68,
-  innerFrameHeight: 0.31,   // v0.10.0：缩小内部门，避免深处门过大
-  innerFrameY: 0.295,       // 缩小门框位置，越小越靠上/越深
+  frameTop: 0.105,
+  frameHeight: 0.76,
+  maxFrameWidth: 0.94,
+  largeDoorSlide: 0.78,
+  innerFrameHeight: 0.38,
+  innerFrameY: 0.275,
   innerDoorInset: 0.12,
-  roomWallDarkness: 0.16,   // 房间内图已偏暗，少压一点避免糊黑
+  roomWallDarkness: 0,
   innerDoorAlpha: 1,
-  innerDoorDarkness: 0.50,
-  // v0.10.1：补回 v0.10.0 遗漏的门板视觉尺寸参数。
-  // 缺少这两个值会导致 createLinearGradient 收到 NaN，游戏直接崩溃。
-  doorVisualTop: 0.055,
-  doorVisualScaleY: 0.90,
-  ghostHeight: 0.39,        // v0.9.9：按新鬼素材缩小，避免顶天立地
-  personHeight: 0.39,       // v0.9.9：人物与妖怪使用接近高度
-  characterBottom: 0.905,   // v0.9.9：统一贴房间地面线，不再悬浮
-  characterMaxW: 0.62,      // v0.9.9：宽图不再撑满整个门洞
-  bossHeight: 0.54,
-  bossMaxW: 0.70,
-  transitionClipPadding: 0  // 缩放严格裁在门框区域内
+  innerDoorDarkness: 0.30,
+  doorVisualTop: 0.028,
+  doorVisualScaleY: 0.955,
+  characterBottom: 0.890,
+  characterMaxW: 0.34,
+  ghostHeight: 0.42,
+  personHeight: 0.43,
+  transitionClipPadding: 0
 }
 
-// 临时测试开关：先隐藏墙壁和地板，只保留黑底、内部门、外门框、外门。
-// 后面想恢复墙壁地板，改成 true 即可。
 const SHOW_WALL_AND_FLOOR = true
 
 let room = 1
@@ -1210,71 +1198,188 @@ function getInnerFrameRect(openRect, scaleBoost = 1) {
   }
 }
 
-function drawProceduralDoor(open, alpha = 1, darkness = 0) {
-  // v0.9.7：不再直接拉伸原始「门.png」。
-  // 原图比例和门洞适配度较低，所以这里按同一风格复刻一扇暗色竖纹推拉门，
-  // 尺寸永远精准填满门洞，避免外门/内门错位。
-  if (!open || !Number.isFinite(open.x) || !Number.isFinite(open.y) || !Number.isFinite(open.w) || !Number.isFinite(open.h) || open.w <= 1 || open.h <= 1) return
+
+function drawInkStrokeRect(x, y, w, h, lineW = 4, alpha = 1) {
   ctx.save()
-  ctx.globalAlpha = alpha
+  ctx.globalAlpha *= alpha
+  ctx.strokeStyle = '#111'
+  ctx.lineWidth = lineW
+  ctx.lineJoin = 'round'
+  ctx.strokeRect(x, y, w, h)
+  ctx.strokeStyle = 'rgba(0,0,0,0.26)'
+  ctx.lineWidth = Math.max(1, lineW * 0.36)
+  ctx.strokeRect(x + lineW * 0.9, y + lineW * 0.9, w - lineW * 1.8, h - lineW * 1.8)
+  ctx.restore()
+}
 
-  const g = ctx.createLinearGradient(open.x, open.y, open.x + open.w, open.y)
-  g.addColorStop(0, '#17191b')
-  g.addColorStop(0.48, '#4b4f54')
-  g.addColorStop(1, '#151719')
-  ctx.fillStyle = g
-  ctx.fillRect(open.x, open.y, open.w, open.h)
+function drawGeneratedWallFrame(frameRect, darkness = 0, alpha = 1) {
+  if (!frameRect) return
+  const open = getOpeningRect(frameRect)
+  ctx.save()
+  ctx.globalAlpha *= alpha
 
-  // 细竖纹，呼应你上传门图的金属/木纹质感。
-  const stripeCount = Math.max(22, Math.floor(open.w / 7))
-  for (let i = 0; i <= stripeCount; i++) {
-    const x = open.x + (i / stripeCount) * open.w
-    ctx.strokeStyle = i % 2 === 0 ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.34)'
-    ctx.lineWidth = Math.max(1, open.w * 0.0022)
+  // 宣纸白墙，参考你图一的黑白手绘 UI 方向。
+  ctx.fillStyle = '#f4f0e7'
+  ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+
+  // 轻微纸纹/脏旧感。
+  for (let i = 0; i < 18; i++) {
+    const yy = frameRect.y + (i / 18) * frameRect.h
+    ctx.strokeStyle = i % 2 ? 'rgba(0,0,0,0.018)' : 'rgba(120,70,40,0.018)'
+    ctx.lineWidth = 1
     ctx.beginPath()
-    ctx.moveTo(x, open.y)
-    ctx.lineTo(x, open.y + open.h)
+    ctx.moveTo(frameRect.x + frameRect.w * 0.04, yy)
+    ctx.lineTo(frameRect.x + frameRect.w * 0.96, yy + Math.sin(i * 1.7) * 3)
     ctx.stroke()
   }
 
-  // 轻微中心高光，避免纯平。
-  const hg = ctx.createRadialGradient(
-    open.x + open.w * 0.52, open.y + open.h * 0.22, open.w * 0.03,
-    open.x + open.w * 0.52, open.y + open.h * 0.22, open.w * 0.78
-  )
-  hg.addColorStop(0, 'rgba(255,255,255,0.18)')
-  hg.addColorStop(0.42, 'rgba(255,255,255,0.05)')
-  hg.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.fillStyle = hg
+  // 外边黑色手绘粗边。
+  drawInkStrokeRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h, Math.max(4, frameRect.w * 0.018), 0.98)
+
+  // 门洞黑边。
+  ctx.fillStyle = '#080808'
+  ctx.fillRect(open.x - frameRect.w * 0.018, open.y - frameRect.h * 0.014, open.w + frameRect.w * 0.036, open.h + frameRect.h * 0.030)
+  ctx.fillStyle = '#f4f0e7'
+  ctx.fillRect(open.x, open.y, open.w, open.h)
+  drawInkStrokeRect(open.x, open.y, open.w, open.h, Math.max(3, frameRect.w * 0.012), 1)
+
+  // 右侧挂签和小铃铛，增加参考图里的中式 UI 感，不影响门洞尺寸。
+  const tagW = frameRect.w * 0.105
+  const tagH = frameRect.h * 0.165
+  const tagX = frameRect.x + frameRect.w * 0.855
+  const tagY = frameRect.y + frameRect.h * 0.39
+  ctx.fillStyle = '#fbf7ed'
+  ctx.fillRect(tagX, tagY, tagW, tagH)
+  drawInkStrokeRect(tagX, tagY, tagW, tagH, Math.max(2, frameRect.w * 0.006), 0.9)
+  ctx.fillStyle = '#111'
+  ctx.font = `${Math.max(11, Math.floor(tagW * 0.22))}px serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const chars = ['出','门','见','喜']
+  chars.forEach((ch, i) => ctx.fillText(ch, tagX + tagW / 2, tagY + tagH * (0.20 + i * 0.20)))
+
+  if (darkness > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${darkness})`
+    ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+  }
+  ctx.restore()
+}
+
+function drawGeneratedRoom(open) {
+  if (!open) return
+  ctx.save()
+
+  // 房间底色：必须和外墙同一套手绘白墙逻辑，保证无限空间一致。
+  ctx.fillStyle = '#f7f4eb'
   ctx.fillRect(open.x, open.y, open.w, open.h)
 
-  // 边缘压暗。
-  ctx.fillStyle = 'rgba(0,0,0,0.32)'
-  ctx.fillRect(open.x, open.y, open.w * 0.025, open.h)
-  ctx.fillRect(open.x + open.w * 0.975, open.y, open.w * 0.025, open.h)
+  const cx = open.x + open.w * 0.5
+  const backW = open.w * 0.46
+  const backH = open.h * 0.43
+  const backX = cx - backW / 2
+  const backY = open.y + open.h * 0.17
+  const floorY = open.y + open.h * 0.70
 
-  // 右侧门把手。
-  const hx = open.x + open.w * 0.84
-  const hy = open.y + open.h * 0.43
-  const hw = Math.max(12, open.w * 0.055)
-  const hh = open.h * 0.24
-  ctx.strokeStyle = 'rgba(230,230,220,0.62)'
-  ctx.lineWidth = Math.max(3, open.w * 0.01)
-  roundRect(hx - hw / 2, hy, hw, hh, hw / 2)
-  ctx.stroke()
   ctx.strokeStyle = 'rgba(0,0,0,0.55)'
-  ctx.lineWidth = Math.max(1.5, open.w * 0.004)
-  roundRect(hx - hw / 2, hy, hw, hh, hw / 2)
+  ctx.lineWidth = Math.max(1.2, open.w * 0.006)
+
+  // 透视墙线。
+  ctx.beginPath()
+  ctx.rect(backX, backY, backW, backH)
+  ctx.moveTo(open.x, open.y); ctx.lineTo(backX, backY)
+  ctx.moveTo(open.x + open.w, open.y); ctx.lineTo(backX + backW, backY)
+  ctx.moveTo(open.x, open.y + open.h); ctx.lineTo(backX, backY + backH)
+  ctx.moveTo(open.x + open.w, open.y + open.h); ctx.lineTo(backX + backW, backY + backH)
+  ctx.stroke()
+
+  // 地砖线，给角色落地参照。
+  ctx.strokeStyle = 'rgba(0,0,0,0.24)'
+  ctx.lineWidth = Math.max(0.8, open.w * 0.003)
+  for (let i = 1; i <= 4; i++) {
+    const t = i / 5
+    const y = lerp(floorY, open.y + open.h, t)
+    ctx.beginPath()
+    ctx.moveTo(open.x + open.w * 0.05, y)
+    ctx.lineTo(open.x + open.w * 0.95, y)
+    ctx.stroke()
+  }
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath()
+    ctx.moveTo(cx + i * open.w * 0.12, floorY)
+    ctx.lineTo(cx + i * open.w * 0.24, open.y + open.h)
+    ctx.stroke()
+  }
+
+  // 轻微暗角。
+  const g = ctx.createRadialGradient(cx, open.y + open.h * 0.48, open.w * 0.18, cx, open.y + open.h * 0.48, open.w * 0.75)
+  g.addColorStop(0, 'rgba(255,255,255,0)')
+  g.addColorStop(1, 'rgba(0,0,0,0.10)')
+  ctx.fillStyle = g
+  ctx.fillRect(open.x, open.y, open.w, open.h)
+
+  ctx.restore()
+}
+
+function drawProceduralDoor(open, alpha = 1, darkness = 0) {
+  if (!open || !Number.isFinite(open.x) || !Number.isFinite(open.y) || !Number.isFinite(open.w) || !Number.isFinite(open.h) || open.w <= 1 || open.h <= 1) return
+  ctx.save()
+  ctx.globalAlpha *= alpha
+
+  // 红色木门，代码生成，后续美术按这个矩形尺寸制作即可。
+  const g = ctx.createLinearGradient(open.x, open.y, open.x + open.w, open.y)
+  g.addColorStop(0, '#7b1d16')
+  g.addColorStop(0.42, '#b43a2c')
+  g.addColorStop(1, '#63150f')
+  ctx.fillStyle = g
+  ctx.fillRect(open.x, open.y, open.w, open.h)
+
+  // 竖向木纹。
+  const stripeCount = Math.max(18, Math.floor(open.w / 6))
+  for (let i = 0; i <= stripeCount; i++) {
+    const x = open.x + (i / stripeCount) * open.w
+    ctx.strokeStyle = i % 2 === 0 ? 'rgba(0,0,0,0.26)' : 'rgba(255,230,200,0.10)'
+    ctx.lineWidth = Math.max(1, open.w * 0.002)
+    ctx.beginPath()
+    ctx.moveTo(x, open.y + open.h * 0.02)
+    ctx.lineTo(x + Math.sin(i * 2.1) * 1.2, open.y + open.h * 0.98)
+    ctx.stroke()
+  }
+
+  // 门边黑线。
+  drawInkStrokeRect(open.x, open.y, open.w, open.h, Math.max(3, open.w * 0.012), 0.95)
+
+  // 纸符。
+  const paperW = open.w * 0.26
+  const paperH = open.h * 0.26
+  const px = open.x + open.w * 0.22
+  const py = open.y + open.h * 0.22
+  ctx.fillStyle = '#f7efd8'
+  ctx.fillRect(px, py, paperW, paperH)
+  drawInkStrokeRect(px, py, paperW, paperH, Math.max(1.5, open.w * 0.006), 0.85)
+  ctx.fillStyle = '#111'
+  ctx.font = `${Math.max(12, Math.floor(paperW * 0.22))}px serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ;['无','尽','之','门'].forEach((ch, i) => ctx.fillText(ch, px + paperW / 2, py + paperH * (0.18 + i * 0.20)))
+
+  // 门环。
+  const ringX = open.x + open.w * 0.63
+  const ringY = open.y + open.h * 0.54
+  ctx.strokeStyle = '#0b0b0b'
+  ctx.lineWidth = Math.max(3, open.w * 0.015)
+  ctx.beginPath()
+  ctx.arc(ringX, ringY, open.w * 0.055, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(ringX, ringY, open.w * 0.115, 0.05, Math.PI * 1.95)
   ctx.stroke()
 
   if (darkness > 0) {
     ctx.fillStyle = `rgba(0,0,0,${darkness})`
     ctx.fillRect(open.x, open.y, open.w, open.h)
   }
-
   ctx.restore()
 }
-
 function getDoorVisualRect(open) {
   // v0.10.1：门板不再占满整个门洞高度，同时加默认值防止配置遗漏导致 NaN。
   const top = Number.isFinite(ART_LAYOUT.doorVisualTop) ? ART_LAYOUT.doorVisualTop : 0.055
@@ -1285,26 +1390,16 @@ function getDoorVisualRect(open) {
 }
 
 function drawClosedDoorSet(frameRect, alpha = 1, darkness = 0, order = 'frameTop') {
-  // 小门和大门都使用同一套门框开口比例，但门框必须压在门上面。
   const open = getOpeningRect(frameRect)
   const doorRect = getDoorVisualRect(open)
 
   ctx.save()
-  ctx.globalAlpha = alpha
-
-  if (order === 'frameBottom') ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-
+  ctx.globalAlpha *= alpha
+  if (order === 'frameBottom') drawGeneratedWallFrame(frameRect, darkness, 1)
   drawProceduralDoor(doorRect, 1, darkness)
-
-  if (order !== 'frameBottom') ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-
-  if (darkness > 0) {
-    ctx.fillStyle = `rgba(0,0,0,${darkness * 0.72})`
-    ctx.fillRect(frameRect.x, frameRect.y, frameRect.w, frameRect.h)
-  }
+  if (order !== 'frameBottom') drawGeneratedWallFrame(frameRect, darkness, 1)
   ctx.restore()
 }
-
 function drawInnerDoorSet(openRect, scaleBoost = 1, alpha = ART_LAYOUT.innerDoorAlpha) {
   const innerFrame = getInnerFrameRect(openRect, scaleBoost)
   // v0.9.7：内部门不是半透明，而是完整门 + 压暗。
@@ -1417,46 +1512,26 @@ function drawArtRoom(frameRect, options = {}) {
   const open = getOpeningRect(frameRect)
   const outerDoorBase = getDoorVisualRect(open)
 
-  // v0.10.0 图层顺序按照你的新要求调整：
-  // 最上层：门框 → 门 → 角色 → 房间内 → 小门 → 小门框。
-  // Canvas 实际绘制需要反过来：黑底 → 小门框 → 小门 → 房间内 → 角色 → 大门 → 大门框。
+  // v0.10.2：只用代码生成门墙/房间/小门，确保大门墙和小门墙是同一套结构。
+  // 实际绘制顺序：黑底 → 小门墙 → 小门 → 房间透视 → 角色 → 大门 → 外墙门框。
   clipRect(open, () => {
     ctx.fillStyle = '#000'
     ctx.fillRect(open.x, open.y, open.w, open.h)
 
-    // 6. 小门框（最底层的空间门框）
     const innerFrame = getInnerFrameRect(open, depthScale)
     ctx.save()
-    ctx.globalAlpha = innerDoorAlpha
-    ctx.drawImage(ASSETS.frame, innerFrame.x, innerFrame.y, innerFrame.w, innerFrame.h)
-    if (ART_LAYOUT.innerDoorDarkness > 0) {
-      ctx.fillStyle = `rgba(0,0,0,${ART_LAYOUT.innerDoorDarkness * 0.72})`
-      ctx.fillRect(innerFrame.x, innerFrame.y, innerFrame.w, innerFrame.h)
-    }
+    ctx.globalAlpha *= innerDoorAlpha
+    drawGeneratedWallFrame(innerFrame, ART_LAYOUT.innerDoorDarkness, 1)
+    drawProceduralDoor(getDoorVisualRect(getOpeningRect(innerFrame)), 1, ART_LAYOUT.innerDoorDarkness)
     ctx.restore()
 
-    // 5. 小门，压在小门框上方。
-    const innerOpen = getOpeningRect(innerFrame)
-    const innerDoor = getDoorVisualRect(innerOpen)
-    ctx.save()
-    ctx.globalAlpha = innerDoorAlpha
-    drawProceduralDoor(innerDoor, 1, ART_LAYOUT.innerDoorDarkness)
-    ctx.restore()
-
-    // 4. 房间内，压在小门上方。这样小门只会在房间图的暗处/洞口区域露出来。
     if (SHOW_WALL_AND_FLOOR) {
-      drawImageCover(ASSETS.room || ASSETS.wall, open.x, open.y, open.w, open.h)
-      if (ART_LAYOUT.roomWallDarkness > 0) {
-        ctx.fillStyle = `rgba(0,0,0,${ART_LAYOUT.roomWallDarkness})`
-        ctx.fillRect(open.x, open.y, open.w, open.h)
-      }
+      drawGeneratedRoom(open)
     }
 
-    // 3. 角色，压在房间内上方。
     if (includeContent) drawRoomContent(open)
   })
 
-  // 2. 最大门，位于角色上方。
   if (includeLargeDoor) {
     const slide = doorOpen * open.w * ART_LAYOUT.largeDoorSlide
     const doorX = outerDoorBase.x - slide
@@ -1467,10 +1542,8 @@ function drawArtRoom(frameRect, options = {}) {
     ctx.restore()
   }
 
-  // 1. 外层门框，最后画，永远压在大门和所有内容上方。
-  ctx.drawImage(ASSETS.frame, frameRect.x, frameRect.y, frameRect.w, frameRect.h)
+  drawGeneratedWallFrame(frameRect, 0, 1)
 }
-
 function drawGhost(cx, cy, frameW, frameH) {
   const alpha = Math.min(1, 0.35 + danger * 0.65)
   let scale = Math.min(frameW, frameH) / 360
