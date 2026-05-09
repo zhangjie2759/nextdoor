@@ -1,12 +1,12 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.7';
+  const VERSION = 'v0.11.8';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0117_save';
+  const STORAGE_KEY = 'next_room_v0118_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
@@ -161,12 +161,12 @@
       w: doorW * smallScale,
       h: doorH * smallScale,
       x: (w - doorW * smallScale) / 2,
-      y: doorY + doorH * 0.34
+      y: doorY + doorH * 0.39
     };
     const smallHole = { ...smallDoor };
     const smallWall = {
       x: smallHole.x - smallHole.w * 0.64,
-      y: smallHole.y - smallHole.h * 0.48,
+      y: smallHole.y - smallHole.h * 0.56,
       w: smallHole.w * 2.28,
       h: smallHole.h * 1.56
     };
@@ -903,12 +903,12 @@
       w: bigDoor.w * smallScale,
       h: bigDoor.h * smallScale,
       x: bigDoor.x + (bigDoor.w - bigDoor.w * smallScale) * 0.5,
-      y: bigDoor.y + bigDoor.h * 0.34
+      y: bigDoor.y + bigDoor.h * 0.39
     };
     const innerHole = { ...innerDoor };
     const innerWall = {
       x: innerHole.x - innerHole.w * 0.64,
-      y: innerHole.y - innerHole.h * 0.48,
+      y: innerHole.y - innerHole.h * 0.56,
       w: innerHole.w * 2.28,
       h: innerHole.h * 1.56
     };
@@ -965,12 +965,14 @@
     }
     function depthEase(i, total) {
       const t = i / total;
-      return 1 - Math.pow(1 - t, 1.72);
+      return 1 - Math.pow(1 - t, 1.62);
     }
 
     ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
-    // 房间结构线：外门洞向内墙收束，内墙本身是一个被掏空放小门的白墙。
+    // 房间轮廓线：外门洞向内墙收束。线宽固定，不随门大小变化。
     ctx.strokeStyle = 'rgba(0,0,0,0.42)';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -984,8 +986,9 @@
     ctx.lineTo(backR.x, backR.y);
     ctx.stroke();
 
-    // 前后落地线，保证门和房间都“站在地上”。
-    ctx.lineWidth = 2.2;
+    // 前后落地线：内门底部会精确压到后落地线。
+    ctx.strokeStyle = 'rgba(0,0,0,0.56)';
+    ctx.lineWidth = 2.4;
     ctx.beginPath();
     ctx.moveTo(frontL.x, frontL.y);
     ctx.lineTo(frontR.x, frontR.y);
@@ -993,9 +996,9 @@
     ctx.lineTo(backR.x, backR.y);
     ctx.stroke();
 
-    // 地砖网格：所有纵横线都投射到同一个四边形地面里，避免错位。
+    // 地砖网格：横线和纵线都从同一个四边形地面计算，避免不对齐。
     ctx.strokeStyle = 'rgba(0,0,0,0.20)';
-    ctx.lineWidth = 1.05;
+    ctx.lineWidth = 1.2;
 
     for (let i = 1; i <= 6; i++) {
       const xFrac = i / 7;
@@ -1061,20 +1064,38 @@
 
   function drawWallWithHole(wall, hole, opts = {}) {
     const fill = opts.fill || '#ffffff';
-    const stroke = opts.stroke || 4;
-    const radius = opts.radius || 13;
+    const stroke = 5; // 绝对线宽，不随门大小变化。
+    const r = 10;
     ctx.save();
     ctx.fillStyle = fill;
-    ctx.strokeStyle = '#111';
-    ctx.lineWidth = stroke;
 
+    // 墙面被门洞掏空，底部不再封死，门框是倒U形落在地板线上。
     ctx.fillRect(wall.x, wall.y, Math.max(0, hole.x - wall.x), wall.h);
     ctx.fillRect(hole.x + hole.w, wall.y, Math.max(0, wall.x + wall.w - (hole.x + hole.w)), wall.h);
     ctx.fillRect(hole.x, wall.y, hole.w, Math.max(0, hole.y - wall.y));
     ctx.fillRect(hole.x, hole.y + hole.h, hole.w, Math.max(0, wall.y + wall.h - (hole.y + hole.h)));
 
-    // 这里只保留墙洞的黑色切边，不再做额外门框。
-    roundRect(hole.x, hole.y, hole.w, hole.h, radius, false, true, stroke);
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = stroke;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 倒U型门框：左边、上边、右边。底部只由地板线承接。
+    ctx.beginPath();
+    ctx.moveTo(hole.x, hole.y + hole.h);
+    ctx.lineTo(hole.x, hole.y + r);
+    ctx.quadraticCurveTo(hole.x, hole.y, hole.x + r, hole.y);
+    ctx.lineTo(hole.x + hole.w - r, hole.y);
+    ctx.quadraticCurveTo(hole.x + hole.w, hole.y, hole.x + hole.w, hole.y + r);
+    ctx.lineTo(hole.x + hole.w, hole.y + hole.h);
+    ctx.stroke();
+
+    // 地板横线：比普通透视线更明确，但不超过门框宽度。
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(hole.x + 1, hole.y + hole.h);
+    ctx.lineTo(hole.x + hole.w - 1, hole.y + hole.h);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1150,10 +1171,11 @@
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = 'rgba(0,0,0,0.68)';
-    ctx.lineWidth = 2.4;
+    ctx.lineWidth = 2.6; // 绝对线宽。
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(x - door.w * 0.05, y);
-    ctx.lineTo(x + door.w * 1.05, y);
+    ctx.moveTo(x + 1, y);
+    ctx.lineTo(x + door.w - 1, y);
     ctx.stroke();
     ctx.restore();
   }
@@ -1219,14 +1241,14 @@
         const hiddenOffset = g.name === '九尾狐' ? -door.w * 0.24 : 0;
         const gx = door.x + door.w / 2 + baseOffset + hiddenOffset;
         const gh = baseH * dangerScale;
-        drawGhostFires(g, gx, floorY - gh * 0.58, gh, Math.max(1, g.fire || 1), i);
         drawCharacter(g, gx, floorY, baseH, 'ghost', dangerScale);
+        drawGhostFires(g, gx, floorY - gh * 0.58, gh, Math.max(1, g.fire || 1), i);
       });
     } else if (c.type === 'boss') {
       const approach = state.mode === 'bossFight' ? Math.floor(state.door * 8) / 8 : 0;
       const scale = state.mode === 'bossFight' ? 1 + approach * 0.45 : 1;
-      drawGhostFires(c.bossGhost, door.x + door.w / 2, floorY - door.h * 0.52, door.h * 0.80, (c.bossGhost.fire || 3) + 2, 9);
       drawCharacter(c.bossGhost, door.x + door.w / 2, floorY + door.h * 0.04, door.h * 0.76, 'boss', scale);
+      drawGhostFires(c.bossGhost, door.x + door.w / 2, floorY - door.h * 0.52, door.h * 0.80, (c.bossGhost.fire || 3) + 2, 9);
     }
     ctx.restore();
   }
@@ -1250,7 +1272,7 @@
       const size = bodyH * (0.14 + (i % 3) * 0.022);
       const img = assets[GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]];
       const pulse = 0.72 + Math.sin(state.t * 3.2 + i) * 0.15;
-      ctx.globalAlpha = clamp(0.60 + pulse * 0.26, 0.48, 0.96);
+      ctx.globalAlpha = clamp(0.72 + pulse * 0.24, 0.58, 1);
       if (img && img.complete && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
       } else {
