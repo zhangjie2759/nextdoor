@@ -1,12 +1,12 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.9';
+  const VERSION = 'v0.11.10';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0119_save';
+  const STORAGE_KEY = 'next_room_v01110_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
@@ -62,6 +62,7 @@
     dragStartDoor: 0,
     danger: 0,
     sealFlash: 0,
+    personFade: 0,
     transition: 0,
     transitionFadeContent: true,
     pendingNextRoom: 2,
@@ -205,6 +206,7 @@
     state.draggingDoor = false;
     state.danger = 0;
     state.sealFlash = 0;
+    state.personFade = 0;
     state.transition = 0;
     state.transitionFadeContent = true;
     state.pendingNextRoom = 2;
@@ -267,6 +269,7 @@
     state.draggingDoor = false;
     state.danger = 0;
     state.sealFlash = 0;
+    state.personFade = 0;
 
     if (win.active && !state.bossDefeated[win.stage]) {
       const chance = win.forced ? 1 : (0.26 + (room - win.start) * 0.11);
@@ -379,7 +382,8 @@
     if (state.screen !== 'game') return;
 
     if (state.mode === 'transition') {
-      state.transition += dt * 1.72;
+      const transitionSpeed = state.difficulty === 'normal' ? 2.35 : 1.95;
+      state.transition += dt * transitionSpeed;
       if (state.transition >= 1) finishAdvance();
       return;
     }
@@ -393,9 +397,18 @@
       return;
     }
 
+    if (state.mode === 'personFade') {
+      const fadeSpeed = state.difficulty === 'normal' ? 2.05 : 1.55;
+      state.personFade += dt * fadeSpeed;
+      if (state.personFade >= 1) {
+        startAdvance({ toRoom: state.room + 1, fadeContent: false });
+      }
+      return;
+    }
+
     if (state.snapTarget !== null && !state.draggingDoor && state.mode === 'normal') {
       const direction = state.snapTarget > state.door ? 1 : -1;
-      const speed = 1.85;
+      const speed = state.difficulty === 'normal' ? 2.85 : 2.20;
       state.door += direction * speed * dt;
       if ((direction > 0 && state.door >= state.snapTarget) || (direction < 0 && state.door <= state.snapTarget)) {
         state.door = state.snapTarget;
@@ -416,12 +429,13 @@
 
     if (c.type === 'ghost') {
       if (state.door > 0.055) {
-        const base = 0.43 + Math.min(state.room, 90) * 0.0052;
+        const base = 0.62 + Math.min(state.room, 90) * 0.0066;
         const speediest = Math.max(...c.ghosts.map(ghostDangerSpeed));
-        const multi = 1 + (c.ghosts.length - 1) * 0.28;
-        const easySlow = state.difficulty === 'easy' && c.ghosts.some(g => g.type === 'thin') ? 0.80 : 1;
-        const openFactor = 0.82 + state.door * 0.90;
-        state.danger += dt * base * speediest * multi * easySlow * openFactor;
+        const multi = 1 + (c.ghosts.length - 1) * 0.34;
+        const easySlow = state.difficulty === 'easy' && c.ghosts.some(g => g.type === 'thin') ? 0.92 : 1;
+        const hardBoost = state.difficulty === 'normal' ? 1.38 : 1;
+        const openFactor = 0.95 + state.door * 1.05;
+        state.danger += dt * base * speediest * multi * easySlow * hardBoost * openFactor;
       } else {
         state.danger = 0;
       }
@@ -431,7 +445,15 @@
     } else if (c.type === 'person' || c.type === 'empty') {
       if (state.door >= 0.92) {
         c.passTimer += dt;
-        if (c.passTimer > 0.25) startAdvance({ toRoom: state.room + 1 });
+        if (c.passTimer > 0.22) {
+          if (c.type === 'person') {
+            state.mode = 'personFade';
+            state.personFade = 0;
+            state.snapTarget = null;
+          } else {
+            startAdvance({ toRoom: state.room + 1 });
+          }
+        }
       } else {
         c.passTimer = 0;
       }
@@ -455,8 +477,9 @@
     const c = state.content;
     if (!c || c.type !== 'boss') return;
     const hpRatio = 1 - c.hits / c.cfg.seals;
-    const panicBoost = hpRatio < 0.3 ? 1.18 : 1;
-    state.door += dt / c.cfg.time * panicBoost;
+    const panicBoost = hpRatio < 0.3 ? 1.25 : 1.08;
+    const hardBoost = state.difficulty === 'normal' ? 1.22 : 1;
+    state.door += dt / c.cfg.time * panicBoost * hardBoost;
     state.door = clamp(state.door, 0, 1);
     if (state.door >= 1) failBoss();
   }
@@ -465,6 +488,7 @@
     state.mode = 'transition';
     state.transition = 0;
     state.transitionFadeContent = opts.fadeContent !== false;
+    state.personFade = 0;
     state.pendingNextRoom = opts.toRoom || state.room + 1;
     state.draggingDoor = false;
     state.snapTarget = null;
@@ -476,6 +500,7 @@
   function finishAdvance() {
     state.room = state.pendingNextRoom;
     state.transition = 0;
+    state.personFade = 0;
     state.transitionFadeContent = true;
     createContent();
   }
@@ -488,6 +513,7 @@
     state.draggingDoor = false;
     state.danger = 0;
     state.sealFlash = 0;
+    state.personFade = 0;
     state.transition = 0;
     state.save.bestRoom = Math.max(state.save.bestRoom || 1, state.room);
     saveGame();
@@ -500,6 +526,7 @@
     saveGame();
     state.screen = 'result';
     state.mode = 'normal';
+    state.personFade = 0;
     state.draggingDoor = false;
     state.snapTarget = null;
   }
@@ -1326,9 +1353,12 @@
     const door = doorArg || l.bigDoor;
     const hole = holeArg || l.bigHole;
     const floorY = door.y + door.h * 0.96;
-    const contentAlpha = state.mode === 'transition' && state.transitionFadeContent
-      ? clamp(1 - state.transition * 1.35, 0, 1)
+    let contentAlpha = state.mode === 'transition' && state.transitionFadeContent
+      ? clamp(1 - state.transition * 1.15, 0, 1)
       : 1;
+    if (state.mode === 'personFade' && c.type === 'person') {
+      contentAlpha *= clamp(1 - state.personFade, 0, 1);
+    }
 
     ctx.save();
     ctx.globalAlpha *= contentAlpha;
@@ -1589,7 +1619,7 @@
 
   function drawBottomControls() {
     const l = state.layout;
-    if (state.mode === 'transition' || state.mode === 'sealSuccess') return;
+    if (state.mode === 'transition' || state.mode === 'sealSuccess' || state.mode === 'personFade') return;
 
     if (state.mode === 'bossFight') {
       drawBossSealButton(l.bossButton);
