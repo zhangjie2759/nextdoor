@@ -8,8 +8,8 @@
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.9.8'
-const GAME_VERSION_NOTE = '转场裁切/封印消失/角色统一落地版'
+const GAME_VERSION = 'v0.9.9'
+const GAME_VERSION_NOTE = '真实素材适配/门框比例/角色落地修正版'
 
 let W = window.innerWidth
 let H = window.innerHeight
@@ -87,30 +87,40 @@ let codexTab = 'ghosts' // ghosts / people
 
 // 门框原图里“门洞”的位置比例。
 // 这组参数决定：门、墙壁、地板、鬼，都会被放进这个洞口里。
+// v0.9.9：按你实际上传素材尺寸修正。
+// 门框.png = 941 × 1672，所以所有门框 / 内部门框都用这个真实比例。
+const FRAME_SOURCE = { w: 941, h: 1672 }
+const FRAME_ASPECT = FRAME_SOURCE.w / FRAME_SOURCE.h
+
+// 门框图里的门洞区域。这里决定门、房间、角色都放在哪个洞口里。
+// 这组数值已按 941×1672 的新门框素材重新估算，避免门洞偏移和拉伸。
 const FRAME_OPENING = {
-  x: 126 / 1086,
-  y: 229 / 1448,
-  w: (948 - 126) / 1086,
-  h: (1322 - 229) / 1448
+  x: 0.105,
+  y: 0.145,
+  w: 0.790,
+  h: 0.770
 }
 
 // 这里是最重要的图层尺寸控制区，后续美术替换时优先调这里。
 const ART_LAYOUT = {
-  frameTop: 0.115,          // 最大门框距离屏幕顶部比例
-  frameHeight: 0.70,        // 最大门框高度比例
-  minFrameWidth: 0.94,      // 如果门框太窄，至少撑到屏幕宽度的 94%
+  frameTop: 0.105,          // 最大门框距离屏幕顶部比例
+  frameHeight: 0.76,        // 最大门框高度比例
+  maxFrameWidth: 0.92,      // v0.9.9：横屏/电脑预览时门框不能无限撑宽
   largeDoorSlide: 0.98,     // 最大门全开时，向左滑出多少个门洞宽度
-  floorStart: 0.68,         // 地板从门洞高度的 68% 开始
-  innerFrameHeight: 0.33,   // 缩小门框高度，占门洞高度
-  innerFrameY: 0.30,        // 缩小门框位置，越小越靠上/越深
-  innerDoorInset: 0.12,     // 缩小门在缩小门框内收进去多少
-  roomWallDarkness: 0.22,   // 房间里面墙壁压暗程度，0=不压暗，越大越暗
-  innerDoorAlpha: 1,        // v0.9.7：房间里的门不再半透明，而是完整绘制后整体压暗
-  innerDoorDarkness: 0.46,   // 房间里的门/门框压暗程度，避免和外层门抢层级
-  ghostHeight: 0.42,         // v0.9.8：鬼和人物统一高度范围
-  personHeight: 0.42,        // v0.9.8：人物和鬼保持相近尺寸
-  characterBottom: 0.965,    // v0.9.8：统一贴地，避免悬浮
-  transitionClipPadding: 8   // v0.9.8：转场缩放裁切边界，防止盖住UI
+  floorStart: 0.68,
+  innerFrameHeight: 0.34,   // 缩小门框高度，占门洞高度
+  innerFrameY: 0.295,       // 缩小门框位置，越小越靠上/越深
+  innerDoorInset: 0.12,
+  roomWallDarkness: 0.16,   // 房间内图已偏暗，少压一点避免糊黑
+  innerDoorAlpha: 1,
+  innerDoorDarkness: 0.50,
+  ghostHeight: 0.39,        // v0.9.9：按新鬼素材缩小，避免顶天立地
+  personHeight: 0.39,       // v0.9.9：人物与妖怪使用接近高度
+  characterBottom: 0.905,   // v0.9.9：统一贴房间地面线，不再悬浮
+  characterMaxW: 0.62,      // v0.9.9：宽图不再撑满整个门洞
+  bossHeight: 0.54,
+  bossMaxW: 0.70,
+  transitionClipPadding: 0  // 缩放严格裁在门框区域内
 }
 
 // 临时测试开关：先隐藏墙壁和地板，只保留黑底、内部门、外门框、外门。
@@ -1147,13 +1157,15 @@ function drawImageContainBottom(img, centerX, bottomY, maxW, maxH) {
 }
 
 function getFrameRect() {
-  const ratio = 1086 / 1448
+  // v0.9.9：使用门框.png 的真实比例 941×1672。
+  // 先按高度放，再用最大宽度限制，避免电脑横屏时门框被撑到盖住 UI。
   let frameH = H * ART_LAYOUT.frameHeight
-  let frameW = frameH * ratio
+  let frameW = frameH * FRAME_ASPECT
+  const maxW = W * ART_LAYOUT.maxFrameWidth
 
-  if (frameW < W * ART_LAYOUT.minFrameWidth) {
-    frameW = W * ART_LAYOUT.minFrameWidth
-    frameH = frameW / ratio
+  if (frameW > maxW) {
+    frameW = maxW
+    frameH = frameW / FRAME_ASPECT
   }
 
   return {
@@ -1183,7 +1195,7 @@ function clipRect(rect, drawFn) {
 }
 
 function getInnerFrameRect(openRect, scaleBoost = 1) {
-  const frameRatio = 1086 / 1448
+  const frameRatio = FRAME_ASPECT
   const innerH = openRect.h * ART_LAYOUT.innerFrameHeight * scaleBoost
   const innerW = innerH * frameRatio
   return {
@@ -1350,7 +1362,7 @@ function drawGhostImage(img, openRect, index = 0, total = 1) {
   const sizeFactor = total === 1 ? 1 : total === 2 ? 0.82 : 0.70
   const centerX = openRect.x + openRect.w * (0.60 + (offsets[index] || 0))
   const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * 0.86 * pressureScale * sizeFactor
+  const maxW = openRect.w * ART_LAYOUT.characterMaxW * pressureScale * sizeFactor
   const maxH = openRect.h * ART_LAYOUT.ghostHeight * pressureScale * sizeFactor
 
   ctx.save()
@@ -1370,7 +1382,7 @@ function drawPersonImage(img, openRect) {
   // v0.9.8：人物和妖怪共用同一地面线与相近尺寸，避免人物漂浮或大小差距过大。
   const centerX = openRect.x + openRect.w * 0.60
   const bottomY = openRect.y + openRect.h * ART_LAYOUT.characterBottom
-  const maxW = openRect.w * 0.86
+  const maxW = openRect.w * ART_LAYOUT.characterMaxW
   const maxH = openRect.h * ART_LAYOUT.personHeight
   drawImageContainBottom(img, centerX, bottomY, maxW, maxH)
 }
@@ -2073,9 +2085,9 @@ function drawBossBattle(frameRect) {
     // Boss 主体：优先复用已有鬼图，否则画一个更纯粹的幽灵剪影。
     const bossImg = ACTIVE_GHOST_SLOTS[0] ? CHARACTER_ASSETS.ghosts[ACTIVE_GHOST_SLOTS[0].id] : null
     const lunge = bossPhase === 'sealing' ? pressure * 0.16 : doorOpen * 0.05
-    const bossBottom = open.y + open.h * (0.86 + lunge * 0.18)
-    const bossH = open.h * (0.70 + lunge)
-    const bossW = open.w * (0.72 + lunge * 0.22)
+    const bossBottom = open.y + open.h * (ART_LAYOUT.characterBottom + lunge * 0.10)
+    const bossH = open.h * (ART_LAYOUT.bossHeight + lunge * 0.20)
+    const bossW = open.w * (ART_LAYOUT.bossMaxW + lunge * 0.14)
 
     ctx.save()
     ctx.globalAlpha = revealAlpha
@@ -2273,29 +2285,3 @@ loadAssets()
   })
 
 loop()
-setTimeout(() => {
-  console.log('===== CHARACTER IMAGE DEBUG START =====');
-
-  const testFiles = [
-    '1号人物.png','2号人物.png','3号人物.png','4号人物.png','5号人物.png',
-    '6号人物.png','7号人物.png','8号人物.png','9号人物.png','10号人物.png',
-
-    '猼訑.png','赤鱬.png','当康.png','混沌.png','九尾狐.png',
-    '夔牛.png','麒麟.png','穷奇.png','饕餮.png','狰.png','烛阴.png',
-
-    '鬼火1.png','鬼火2.png','鬼火3.png','鬼火4.png','鬼火5.png'
-  ];
-
-  testFiles.forEach((src) => {
-    const img = new Image();
-    img.onload = () => {
-      console.log(src, img.naturalWidth, img.naturalHeight);
-    };
-    img.onerror = () => {
-      console.log('加载失败:', src);
-    };
-    img.src = src;
-  });
-
-  console.log('===== CHARACTER IMAGE DEBUG END =====');
-}, 1000);
