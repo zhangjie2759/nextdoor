@@ -8,7 +8,7 @@
 const canvas = document.getElementById('game')
 const ctx = canvas.getContext('2d')
 
-const GAME_VERSION = 'v0.10.4'
+const GAME_VERSION = 'v0.10.5'
 const GAME_VERSION_NOTE = '无限空间层级重构版'
 
 let W = window.innerWidth
@@ -91,29 +91,36 @@ const FRAME_ASPECT = FRAME_SOURCE.w / FRAME_SOURCE.h
 // 外层门洞在整张“门墙”中的比例。
 // 这就是未来你做门框/墙面素材时最重要的裁切标准。
 const FRAME_OPENING = {
-  x: 0.165,
-  y: 0.225,
-  w: 0.670,
-  h: 0.565
+  // v0.10.5：门洞改窄、改高，更接近手机竖屏里的“门”，避免变成横宽的大方块。
+  x: 0.220,
+  y: 0.170,
+  w: 0.560,
+  h: 0.650
 }
 
 const ART_LAYOUT = {
-  frameTop: 0.205,
-  frameHeight: 0.56,
-  maxFrameWidth: 0.84,
-  largeDoorSlide: 0.88,
-  innerFrameHeight: 0.34,
-  innerFrameY: 0.255,
+  // v0.10.5：整体门墙更大、更靠上，黑边减少，但仍给顶部 UI 和底部封印按钮留空间。
+  frameTop: 0.185,
+  frameHeight: 0.635,
+  maxFrameWidth: 0.90,
+  largeDoorSlide: 0.96,
+
+  // 小墙面 / 小门在透视空间里更深、更小，放大时才有真正靠近感。
+  innerFrameHeight: 0.255,
+  innerFrameY: 0.235,
   innerDoorInset: 0.12,
   roomWallDarkness: 0,
   innerDoorAlpha: 1,
-  innerDoorDarkness: 0.32,
-  doorVisualTop: 0.055,
-  doorVisualScaleY: 0.875,
-  characterBottom: 0.900,
-  characterMaxW: 0.31,
-  ghostHeight: 0.38,
-  personHeight: 0.40,
+  innerDoorDarkness: 0.36,
+
+  // 门板不要顶满门洞，保留门框上下边。
+  doorVisualTop: 0.030,
+  doorVisualScaleY: 0.935,
+
+  characterBottom: 0.910,
+  characterMaxW: 0.28,
+  ghostHeight: 0.34,
+  personHeight: 0.37,
   transitionClipPadding: 0
 }
 
@@ -1277,52 +1284,59 @@ function drawGeneratedRoom(open) {
   if (!open) return
   ctx.save()
 
-  // 空间层不再大面积盖色，避免把后方小墙/小门遮住。
-  // 它只提供透视线、地面线和轻微雾感。
+  // v0.10.5：强化“室内透视”。近处就是外部门洞，远处收束到更小的后墙，
+  // 后方小门墙会放在这个后墙区域，形成大门 / 小门同构的无限空间。
   const cx = open.x + open.w * 0.5
-  const backW = open.w * 0.46
-  const backH = open.h * 0.43
+  const backW = open.w * 0.38
+  const backH = open.h * 0.40
   const backX = cx - backW / 2
-  const backY = open.y + open.h * 0.17
-  const floorY = open.y + open.h * 0.70
+  const backY = open.y + open.h * 0.155
+  const backBottom = backY + backH
+  const floorY = open.y + open.h * 0.585
 
   const wash = ctx.createLinearGradient(open.x, open.y, open.x, open.y + open.h)
-  wash.addColorStop(0, 'rgba(247,244,235,0.38)')
-  wash.addColorStop(0.55, 'rgba(247,244,235,0.18)')
-  wash.addColorStop(1, 'rgba(0,0,0,0.08)')
+  wash.addColorStop(0, 'rgba(248,244,235,0.52)')
+  wash.addColorStop(0.50, 'rgba(248,244,235,0.26)')
+  wash.addColorStop(1, 'rgba(0,0,0,0.10)')
   ctx.fillStyle = wash
   ctx.fillRect(open.x, open.y, open.w, open.h)
 
-  ctx.strokeStyle = 'rgba(0,0,0,0.50)'
+  ctx.strokeStyle = 'rgba(0,0,0,0.58)'
   ctx.lineWidth = Math.max(1.2, open.w * 0.006)
   ctx.beginPath()
   ctx.rect(backX, backY, backW, backH)
+  // 天花板 / 墙面四角透视线
   ctx.moveTo(open.x, open.y); ctx.lineTo(backX, backY)
   ctx.moveTo(open.x + open.w, open.y); ctx.lineTo(backX + backW, backY)
-  ctx.moveTo(open.x, open.y + open.h); ctx.lineTo(backX, backY + backH)
-  ctx.moveTo(open.x + open.w, open.y + open.h); ctx.lineTo(backX + backW, backY + backH)
+  ctx.moveTo(open.x, open.y + open.h); ctx.lineTo(backX, backBottom)
+  ctx.moveTo(open.x + open.w, open.y + open.h); ctx.lineTo(backX + backW, backBottom)
   ctx.stroke()
 
-  ctx.strokeStyle = 'rgba(0,0,0,0.22)'
+  // 地面网格：横线逐渐向后墙收束，纵线向消失点靠拢。
+  ctx.strokeStyle = 'rgba(0,0,0,0.24)'
   ctx.lineWidth = Math.max(0.8, open.w * 0.003)
-  for (let i = 1; i <= 4; i++) {
-    const tt = i / 5
-    const y = lerp(floorY, open.y + open.h, tt)
+  for (let i = 1; i <= 5; i++) {
+    const tt = i / 6
+    const y = lerp(floorY, open.y + open.h, tt * tt)
+    const shrink = lerp(0.12, 0.02, tt)
     ctx.beginPath()
-    ctx.moveTo(open.x + open.w * 0.05, y)
-    ctx.lineTo(open.x + open.w * 0.95, y)
+    ctx.moveTo(open.x + open.w * shrink, y)
+    ctx.lineTo(open.x + open.w * (1 - shrink), y)
     ctx.stroke()
   }
-  for (let i = -2; i <= 2; i++) {
+  const vanishY = backBottom
+  for (let i = -3; i <= 3; i++) {
+    const nearX = cx + i * open.w * 0.145
+    const farX = cx + i * backW * 0.16
     ctx.beginPath()
-    ctx.moveTo(cx + i * open.w * 0.12, floorY)
-    ctx.lineTo(cx + i * open.w * 0.24, open.y + open.h)
+    ctx.moveTo(nearX, open.y + open.h)
+    ctx.lineTo(farX, vanishY)
     ctx.stroke()
   }
 
-  const g = ctx.createRadialGradient(cx, open.y + open.h * 0.48, open.w * 0.18, cx, open.y + open.h * 0.48, open.w * 0.75)
+  const g = ctx.createRadialGradient(cx, open.y + open.h * 0.48, open.w * 0.18, cx, open.y + open.h * 0.48, open.w * 0.78)
   g.addColorStop(0, 'rgba(255,255,255,0)')
-  g.addColorStop(1, 'rgba(0,0,0,0.13)')
+  g.addColorStop(1, 'rgba(0,0,0,0.16)')
   ctx.fillStyle = g
   ctx.fillRect(open.x, open.y, open.w, open.h)
 
