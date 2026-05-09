@@ -1,14 +1,14 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.14';
+  const VERSION = 'v0.11.16';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
   const STORAGE_KEY = 'next_room_v01111_save';
 
-  const ASSET_BASES = ['assets/', './', 'images/'];
+  const ASSET_BASES = ['assets/', './assets/', './', 'images/', './images/'];
 
   const GHOSTS = [
     { name: '猼訑', nameEn: 'Botuo', file: '猼訑.png', type: 'normal', speed: 1.28, fire: 2, desc: '警觉又狡猾，喜欢躲在门后观察人。', descEn: 'Alert and cunning. It likes watching people from behind the door.' },
@@ -64,6 +64,7 @@
     sealFlash: 0,
     personFade: 0,
     transition: 0,
+    transitionDoor: 0,
     transitionFadeContent: true,
     pendingNextRoom: 2,
     resultReason: '',
@@ -124,13 +125,20 @@
     img.onerror = () => {
       baseIndex += 1;
       if (baseIndex < ASSET_BASES.length) {
-        img.src = ASSET_BASES[baseIndex] + file;
+        img.src = encodeURI(ASSET_BASES[baseIndex] + file);
       } else {
         assets[file] = null;
       }
     };
-    img.src = ASSET_BASES[baseIndex] + file;
+    img.src = encodeURI(ASSET_BASES[baseIndex] + file);
     assets[file] = img;
+  }
+
+  function getAssetImage(file) {
+    const img = assets[file];
+    if (img && img.naturalWidth) return img;
+    if (img === null || img === undefined) loadImageWithFallback(file);
+    return null;
   }
 
   allAssetFiles.forEach(loadImageWithFallback);
@@ -212,6 +220,7 @@
     state.sealFlash = 0;
     state.personFade = 0;
     state.transition = 0;
+    state.transitionDoor = 0;
     state.transitionFadeContent = true;
     state.pendingNextRoom = 2;
     state.resultReason = '';
@@ -401,15 +410,6 @@
       return;
     }
 
-    if (state.mode === 'personFade') {
-      const fadeSpeed = state.difficulty === 'normal' ? 2.05 : 1.55;
-      state.personFade += dt * fadeSpeed;
-      if (state.personFade >= 1) {
-        startAdvance({ toRoom: state.room + 1, fadeContent: false });
-      }
-      return;
-    }
-
     if (state.snapTarget !== null && !state.draggingDoor && state.mode === 'normal') {
       const direction = state.snapTarget > state.door ? 1 : -1;
       const speed = state.difficulty === 'normal' ? 2.85 : 2.20;
@@ -449,8 +449,8 @@
     } else if (c.type === 'person' || c.type === 'empty') {
       if (state.door >= 0.92) {
         c.passTimer += dt;
-        if (c.passTimer > 0.22) {
-          startAdvance({ toRoom: state.room + 1, fadeContent: c.type === 'person' });
+        if (c.passTimer > 0.06) {
+          startAdvance({ toRoom: state.room + 1, fadeContent: c.type === 'person', doorProgress: state.door });
         }
       } else {
         c.passTimer = 0;
@@ -485,6 +485,7 @@
   function startAdvance(opts = {}) {
     state.mode = 'transition';
     state.transition = 0;
+    state.transitionDoor = opts.doorProgress !== undefined ? opts.doorProgress : state.door;
     state.transitionFadeContent = opts.fadeContent !== false;
     state.personFade = 0;
     state.pendingNextRoom = opts.toRoom || state.room + 1;
@@ -498,6 +499,7 @@
   function finishAdvance() {
     state.room = state.pendingNextRoom;
     state.transition = 0;
+    state.transitionDoor = 0;
     state.personFade = 0;
     state.transitionFadeContent = true;
     createContent();
@@ -1097,8 +1099,8 @@
       ctx.restore();
     }
     drawBigWall(bigHole);
-    drawDoorPanel(bigDoor, 0, { big: true });
-    drawDoorBaseLine(bigDoor, 0, 1);
+    drawDoorPanel(bigDoor, state.transitionDoor, { big: true });
+    drawDoorBaseLine(bigDoor, state.transitionDoor, 1);
     ctx.restore();
   }
 
@@ -1399,10 +1401,6 @@
     let contentAlpha = state.mode === 'transition' && state.transitionFadeContent
       ? clamp(1 - state.transition, 0, 1)
       : 1;
-    if (state.mode === 'personFade' && c.type === 'person') {
-      contentAlpha *= clamp(1 - state.personFade, 0, 1);
-    }
-
     ctx.save();
     ctx.globalAlpha *= contentAlpha;
     ctx.beginPath();
@@ -1453,10 +1451,10 @@
       const x = cx + side * bodyH * (0.22 + layer * 0.08) + drift;
       const y = cy - bodyH * (0.04 + layer * 0.035) + bob;
       const size = bodyH * (0.14 + (i % 3) * 0.022);
-      const img = assets[GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]];
+      const img = getAssetImage(GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]);
       const pulse = 0.72 + Math.sin(state.t * 3.2 + i) * 0.15;
       ctx.globalAlpha = clamp(0.72 + pulse * 0.24, 0.58, 1);
-      if (img && img.complete && img.naturalWidth) {
+      if (img && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
       } else {
         drawCodeGhostFire(x, y, size, pulse);
@@ -1484,7 +1482,7 @@
   }
 
   function drawCharacter(def, x, floorY, targetH, kind, scale = 1) {
-    const img = assets[def.file];
+    const img = getAssetImage(def.file);
     const h = targetH * scale * (def.scale || 1);
     const aspect = img && img.naturalWidth ? img.naturalWidth / img.naturalHeight : 0.62;
     const w = h * aspect;
@@ -1497,10 +1495,8 @@
       ctx.shadowBlur = 24 + pulse * 16;
     }
 
-    if (img && img.complete && img.naturalWidth) {
+    if (img && img.naturalWidth) {
       ctx.drawImage(img, x - w / 2, y, w, h);
-    } else {
-      drawFallbackCharacter(def.name, x, y, w, h, kind);
     }
     ctx.restore();
   }
@@ -1662,7 +1658,7 @@
 
   function drawBottomControls() {
     const l = state.layout;
-    if (state.mode === 'transition' || state.mode === 'sealSuccess' || state.mode === 'personFade') return;
+    if (state.mode === 'transition' || state.mode === 'sealSuccess') return;
 
     if (state.mode === 'bossFight') {
       drawBossSealButton(l.bossButton);
@@ -1787,7 +1783,7 @@
       const size = Math.max(34, Math.min(58, l.w * (0.09 + (i % 3) * 0.012)));
       const img = assets[GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]];
       ctx.globalAlpha = 0.34 + Math.sin(state.t * 2 + i) * 0.08;
-      if (img && img.complete && img.naturalWidth) {
+      if (img && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
       } else {
         drawCodeGhostFire(x, y, size, 0.8);
@@ -1919,8 +1915,8 @@
   }
 
   function drawCardImage(item, box, silhouette) {
-    const img = assets[item.file];
-    if (img && img.complete && img.naturalWidth) {
+    const img = getAssetImage(item.file);
+    if (img && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
       let drawH = box.h * 0.96;
       let drawW = drawH * aspect;
