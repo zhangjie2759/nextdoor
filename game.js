@@ -2273,10 +2273,27 @@ loadAssets()
   })
 
 loop()
-function debugImageInfo() {
-  Object.entries(IMAGES).forEach(([key, img]) => {
-    if (!img) return;
-    console.log(key, img.src, img.naturalWidth, img.naturalHeight);
+setTimeout(() => {
+  console.log('===== IMAGE DEBUG START =====');
+
+  const pools = [
+    ['LOADED_IMAGES', typeof LOADED_IMAGES !== 'undefined' ? LOADED_IMAGES : null],
+    ['images', typeof images !== 'undefined' ? images : null],
+    ['ASSETS', typeof ASSETS !== 'undefined' ? ASSETS : null],
+    ['loadedImages', typeof loadedImages !== 'undefined' ? loadedImages : null],
+  ];
+
+  pools.forEach(([poolName, pool]) => {
+    if (!pool) return;
+    console.log('POOL:', poolName);
+
+    Object.entries(pool).forEach(([key, img]) => {
+      if (!img) return;
+      if (img instanceof HTMLImageElement) {
+        console.log(key, img.src, img.naturalWidth, img.naturalHeight);
+      }
+    });
   });
-}
-setTimeout(debugImageInfo, 2000);
+
+  console.log('===== IMAGE DEBUG END =====');
+}, 3000);
