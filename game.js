@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.11';
+  const VERSION = 'v0.11.12';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -1925,12 +1925,7 @@
       const x = box.x + box.w / 2 - drawW / 2;
       const y = box.y + box.h - drawH;
       if (silhouette) {
-        ctx.save();
-        ctx.drawImage(img, x, y, drawW, drawH);
-        ctx.globalCompositeOperation = 'source-in';
-        ctx.fillStyle = '#111';
-        ctx.fillRect(x, y, drawW, drawH);
-        ctx.restore();
+        drawSilhouetteImage(img, x, y, drawW, drawH);
       } else {
         ctx.drawImage(img, x, y, drawW, drawH);
       }
@@ -1940,6 +1935,38 @@
       drawFallbackCharacter(item.name, box.x + box.w / 2, box.y + box.h * 0.08, box.w * 0.56, box.h * 0.86, state.galleryTab === 'people' ? 'person' : 'ghost');
       ctx.restore();
     }
+  }
+
+  function drawSilhouetteImage(img, x, y, w, h) {
+    const off = document.createElement('canvas');
+    off.width = Math.max(1, Math.round(w));
+    off.height = Math.max(1, Math.round(h));
+    const octx = off.getContext('2d', { willReadFrequently: true });
+    octx.clearRect(0, 0, off.width, off.height);
+    octx.drawImage(img, 0, 0, off.width, off.height);
+
+    const frame = octx.getImageData(0, 0, off.width, off.height);
+    const d = frame.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
+      if (a < 16) {
+        d[i + 3] = 0;
+        continue;
+      }
+      const maxc = Math.max(r, g, b);
+      const minc = Math.min(r, g, b);
+      const isGreenScreen = g > 90 && g > r * 1.18 && g > b * 1.12 && (maxc - minc) > 18;
+      if (isGreenScreen) {
+        d[i + 3] = 0;
+      } else {
+        d[i] = 17;
+        d[i + 1] = 17;
+        d[i + 2] = 17;
+        d[i + 3] = 255;
+      }
+    }
+    octx.putImageData(frame, 0, 0);
+    ctx.drawImage(off, x, y, w, h);
   }
 
   function drawTextPanel(lines, x, y, w, h) {
