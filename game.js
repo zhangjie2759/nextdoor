@@ -1,14 +1,14 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.17-lazy';
+  const VERSION = 'v0.11.19';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
   const STORAGE_KEY = 'next_room_v01111_save';
 
-  const ASSET_BASES = ['assets/', './', 'images/'];
+  const ASSET_BASES = ['assets/', './assets/', './', 'images/', './images/'];
 
   const GHOSTS = [
     { name: '猼訑', nameEn: 'Botuo', file: '猼訑.png', type: 'normal', speed: 1.28, fire: 2, desc: '警觉又狡猾，喜欢躲在门后观察人。', descEn: 'Alert and cunning. It likes watching people from behind the door.' },
@@ -64,6 +64,7 @@
     sealFlash: 0,
     personFade: 0,
     transition: 0,
+    transitionDoor: 0,
     transitionFadeContent: true,
     pendingNextRoom: 2,
     resultReason: '',
@@ -81,6 +82,14 @@
     rulesDragging: false,
     rulesDragStartY: 0,
     rulesDragStartScroll: 0,
+    loadingNextScreen: 'menu',
+    loadingFiles: [],
+    loadingElapsed: 0,
+    loadingMin: 0.7,
+    loadingMax: 3.0,
+    loadingTitle: '正在点香……',
+    loadingTitleEn: 'Lighting incense...',
+    roomLoading: null,
     save: loadSave(),
     pointer: { x: 0, y: 0, down: false },
     layout: null,
@@ -88,7 +97,12 @@
   };
 
   const assets = {};
-  const assetState = {};
+  const allAssetFiles = [
+    '封印按钮.png',
+    ...PEOPLE.map(p => p.file),
+    ...GHOSTS.map(g => g.file),
+    ...GHOST_FIRE_FILES
+  ];
 
   function loadSave() {
     try {
@@ -111,57 +125,87 @@
     } catch (e) {}
   }
 
-  function ensureAsset(file) {
-    if (!file) return null;
-    if (assetState[file] === 'loaded' || assetState[file] === 'loading' || assetState[file] === 'failed') {
-      return assets[file] || null;
-    }
-    return loadImageWithFallback(file);
-  }
+  const assetCache = {};
 
-  function getAsset(file) {
-    const img = assets[file];
-    if (!img && assetState[file] !== 'failed') ensureAsset(file);
-    return assets[file] || null;
+  function assetCandidateUrls(file) {
+    const urls = [];
+    const push = src => {
+      if (!src || urls.includes(src)) return;
+      urls.push(src);
+      const encoded = encodeURI(src);
+      if (encoded !== src && !urls.includes(encoded)) urls.push(encoded);
+    };
+    // 先并行尝试最常用的资源位置，避免一层层 404 导致看起来“加载很慢”。
+    ASSET_BASES.forEach(base => push(base + file));
+    return urls;
   }
 
   function loadImageWithFallback(file) {
-    let baseIndex = 0;
-    const img = new Image();
-    img.decoding = 'async';
-    assetState[file] = 'loading';
-    img.onload = () => {
-      assets[file] = img;
-      assetState[file] = 'loaded';
+    const existing = assetCache[file];
+    if (existing && existing.started) return existing;
+
+    const record = {
+      started: true,
+      loaded: false,
+      failed: false,
+      img: null,
+      pending: 0,
+      src: ''
     };
-    img.onerror = () => {
-      baseIndex += 1;
-      if (baseIndex < ASSET_BASES.length) {
-        img.src = ASSET_BASES[baseIndex] + file;
-      } else {
-        assets[file] = null;
-        assetState[file] = 'failed';
-      }
-    };
-    img.src = ASSET_BASES[baseIndex] + file;
-    assets[file] = img;
-    return img;
+    assetCache[file] = record;
+
+    const candidates = assetCandidateUrls(file);
+    record.pending = candidates.length;
+
+    candidates.forEach(src => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => {
+        if (record.loaded) return;
+        record.loaded = true;
+        record.failed = false;
+        record.img = img;
+        record.src = src;
+        assets[file] = img;
+      };
+      img.onerror = () => {
+        record.pending -= 1;
+        if (record.pending <= 0 && !record.loaded) {
+          record.failed = true;
+          // 只标记失败，不阻止后续重新尝试。
+          assets[file] = null;
+        }
+      };
+      img.src = src;
+    });
+
+    return record;
   }
 
-  function warmContentAssets(content) {
-    ensureAsset('封印按钮.png');
-    if (!content) return;
-    if (content.type === 'person' && content.person) {
-      ensureAsset(content.person.file);
-    } else if (content.type === 'ghost' && content.ghosts) {
-      content.ghosts.forEach(g => ensureAsset(g.file));
-    } else if (content.type === 'boss' && content.bossGhost) {
-      ensureAsset(content.bossGhost.file);
+  function getAssetImage(file) {
+    let record = assetCache[file];
+    if (!record || (!record.started && !record.loaded)) {
+      record = loadImageWithFallback(file);
     }
+    if (record && record.loaded && record.img && record.img.complete && record.img.naturalWidth) {
+      return record.img;
+    }
+    const legacy = assets[file];
+    if (legacy && legacy.complete && legacy.naturalWidth) return legacy;
+
+    // 如果所有候选都失败，过一会儿允许重新尝试，避免 GitHub Pages / 缓存短暂异常后永久空掉。
+    if (record && record.failed && !record.retryAt) {
+      record.retryAt = state.t + 1.2;
+    }
+    if (record && record.failed && record.retryAt && state.t > record.retryAt) {
+      delete assetCache[file];
+      delete assets[file];
+      loadImageWithFallback(file);
+    }
+    return null;
   }
 
-  // 只预加载按钮；角色、鬼、鬼火、图鉴图片都改为用到时再加载。
-  ensureAsset('封印按钮.png');
+  ['封印按钮.png', ...GHOST_FIRE_FILES].forEach(loadImageWithFallback);
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, DPR_MAX);
@@ -228,6 +272,116 @@
   function displayDesc(item) { return isEn() ? (item.descEn || item.desc || 'No record yet.') : (item.desc || '暂无记录'); }
   function ui(zh, en) { return isEn() ? en : zh; }
 
+
+  function uniqueFiles(files) {
+    return Array.from(new Set((files || []).filter(Boolean)));
+  }
+
+  function preloadFiles(files) {
+    uniqueFiles(files).forEach(file => loadImageWithFallback(file));
+  }
+
+  function assetLoadProgress(files) {
+    const list = uniqueFiles(files);
+    if (!list.length) return { loaded: 1, count: 0, total: 0 };
+    let count = 0;
+    list.forEach(file => {
+      const img = getAssetImage(file);
+      if (img && img.complete && img.naturalWidth) count += 1;
+    });
+    return { loaded: count / list.length, count, total: list.length };
+  }
+
+  function initialPreloadFiles() {
+    return uniqueFiles([
+      '封印按钮.png',
+      ...GHOST_FIRE_FILES,
+      ...PEOPLE.slice(0, 4).map(p => p.file),
+      ...GHOSTS.slice(0, 5).map(g => g.file)
+    ]);
+  }
+
+  function stagePreloadFiles(room = state.room) {
+    const unlockCount = clamp(4 + Math.floor(room / 8), 4, GHOSTS.length);
+    const stage = bossStageForRoom(room);
+    return uniqueFiles([
+      '封印按钮.png',
+      ...GHOST_FIRE_FILES,
+      ...PEOPLE.map(p => p.file),
+      ...GHOSTS.slice(0, Math.min(GHOSTS.length, unlockCount + 2)).map(g => g.file),
+      bossGhostForStage(stage).file
+    ]);
+  }
+
+  function contentPreloadFiles(content) {
+    if (!content) return ['封印按钮.png', ...GHOST_FIRE_FILES];
+    const files = ['封印按钮.png'];
+    if (content.type === 'ghost') {
+      content.ghosts.forEach(g => files.push(g.file));
+      files.push(...GHOST_FIRE_FILES.slice(0, 3));
+    } else if (content.type === 'person') {
+      files.push(content.person.file);
+    } else if (content.type === 'boss') {
+      files.push(content.bossGhost.file, ...GHOST_FIRE_FILES);
+    } else {
+      files.push(...GHOST_FIRE_FILES.slice(0, 2));
+    }
+    return uniqueFiles(files);
+  }
+
+  function beginGlobalLoading(nextScreen, files, titleZh, titleEn, minTime = 0.75, maxTime = 3.0) {
+    state.screen = 'loading';
+    state.loadingNextScreen = nextScreen;
+    state.loadingFiles = uniqueFiles(files);
+    state.loadingElapsed = 0;
+    state.loadingMin = minTime;
+    state.loadingMax = maxTime;
+    state.loadingTitle = titleZh;
+    state.loadingTitleEn = titleEn;
+    preloadFiles(state.loadingFiles);
+  }
+
+  function updateGlobalLoading(dt) {
+    state.loadingElapsed += dt;
+    const prog = assetLoadProgress(state.loadingFiles).loaded;
+    const ready = prog >= 1 || state.loadingElapsed >= state.loadingMax;
+    if (state.loadingElapsed >= state.loadingMin && ready) {
+      state.screen = state.loadingNextScreen;
+      state.loadingFiles = [];
+      state.loadingElapsed = 0;
+    }
+  }
+
+  function prepareRoomLoadingForContent(content) {
+    const files = uniqueFiles([...contentPreloadFiles(content), ...stagePreloadFiles(state.room).slice(0, 8)]);
+    const stageIndex = ((state.room - 1) % 25) + 1;
+    const isNewStage = stageIndex === 1 && state.room > 1;
+    state.roomLoading = {
+      active: true,
+      files,
+      elapsed: 0,
+      min: isNewStage ? 0.95 : 0.28,
+      max: isNewStage ? 1.8 : 1.05,
+      title: isNewStage ? '新的门境开启……' : '门后有动静……',
+      titleEn: isNewStage ? 'A new threshold opens...' : 'Something moves behind the door...'
+    };
+    preloadFiles(files);
+  }
+
+  function roomIsLoading() {
+    return !!(state.roomLoading && state.roomLoading.active);
+  }
+
+  function updateRoomLoading(dt) {
+    if (!roomIsLoading()) return;
+    const r = state.roomLoading;
+    r.elapsed += dt;
+    const prog = assetLoadProgress(r.files).loaded;
+    if (r.elapsed >= r.min && (prog >= 1 || r.elapsed >= r.max)) {
+      r.active = false;
+    }
+  }
+
   function startRun(difficulty) {
     state.screen = 'game';
     state.difficulty = difficulty;
@@ -240,6 +394,7 @@
     state.sealFlash = 0;
     state.personFade = 0;
     state.transition = 0;
+    state.transitionDoor = 0;
     state.transitionFadeContent = true;
     state.pendingNextRoom = 2;
     state.resultReason = '';
@@ -319,7 +474,7 @@
           forced: win.forced,
           passTimer: 0
         };
-        warmContentAssets(state.content);
+        prepareRoomLoadingForContent(state.content);
         return;
       }
     }
@@ -340,6 +495,7 @@
         passTimer: 0,
         talismans: []
       };
+      prepareRoomLoadingForContent(state.content);
     } else if (r < ghostChance + personChance) {
       const person = randItem(PEOPLE);
       state.content = {
@@ -349,6 +505,7 @@
         passTimer: 0,
         talismans: []
       };
+      prepareRoomLoadingForContent(state.content);
     } else {
       state.content = {
         type: 'empty',
@@ -356,8 +513,8 @@
         passTimer: 0,
         talismans: []
       };
+      prepareRoomLoadingForContent(state.content);
     }
-    warmContentAssets(state.content);
   }
 
   function ghostCountForRoom(room) {
@@ -413,7 +570,17 @@
       state.eyeFx = Math.max(0, state.eyeFx - dt);
     }
 
+    if (state.screen === 'loading') {
+      updateGlobalLoading(dt);
+      return;
+    }
+
     if (state.screen !== 'game') return;
+
+    if (roomIsLoading()) {
+      updateRoomLoading(dt);
+      return;
+    }
 
     if (state.mode === 'transition') {
       const transitionSpeed = state.difficulty === 'normal' ? 2.35 : 1.95;
@@ -428,13 +595,6 @@
         if (state.content && state.content.talismans) state.content.talismans = [];
         finishSealAdvance();
       }
-      return;
-    }
-
-    if (state.mode === 'personFade') {
-      // 旧版会先让人物单独消失，再进入下一间，节奏会拖。
-      // 现在人物消失统一交给 transition 处理，和门洞放大共用同一个进度。
-      startAdvance({ toRoom: state.room + 1, fadeContent: true });
       return;
     }
 
@@ -477,8 +637,8 @@
     } else if (c.type === 'person' || c.type === 'empty') {
       if (state.door >= 0.92) {
         c.passTimer += dt;
-        if (c.passTimer > 0.22) {
-          startAdvance({ toRoom: state.room + 1, fadeContent: c.type === 'person' });
+        if (c.passTimer > 0.06) {
+          startAdvance({ toRoom: state.room + 1, fadeContent: c.type === 'person', doorProgress: state.door });
         }
       } else {
         c.passTimer = 0;
@@ -513,6 +673,7 @@
   function startAdvance(opts = {}) {
     state.mode = 'transition';
     state.transition = 0;
+    state.transitionDoor = opts.doorProgress !== undefined ? opts.doorProgress : state.door;
     state.transitionFadeContent = opts.fadeContent !== false;
     state.personFade = 0;
     state.pendingNextRoom = opts.toRoom || state.room + 1;
@@ -526,6 +687,7 @@
   function finishAdvance() {
     state.room = state.pendingNextRoom;
     state.transition = 0;
+    state.transitionDoor = 0;
     state.personFade = 0;
     state.transitionFadeContent = true;
     createContent();
@@ -657,6 +819,7 @@
     state.pointer = { x: p.x, y: p.y, down: true };
 
     if (state.screen === 'menu') return handleMenuDown(p);
+    if (state.screen === 'loading') return;
     if (state.screen === 'difficulty') return handleDifficultyDown(p);
     if (state.screen === 'rules') return handleRulesDown(p);
     if (state.screen === 'gallery') return handleGalleryDown(p);
@@ -675,6 +838,8 @@
       state.draggingDoor = false;
       return;
     }
+
+    if (roomIsLoading()) return;
 
     if (state.mode === 'bossFight') {
       if (hit(p, l.bossButton)) handleBossSealClick();
@@ -716,7 +881,7 @@
       state.galleryScroll = clamp(state.galleryDragStartScroll + (state.galleryDragStartY - p.y), 0, maxGalleryScroll());
       return;
     }
-    if (!state.draggingDoor || state.screen !== 'game' || state.mode !== 'normal') return;
+    if (!state.draggingDoor || state.screen !== 'game' || state.mode !== 'normal' || roomIsLoading()) return;
     e.preventDefault();
     const l = state.layout;
     const dx = state.dragStartX - p.x;
@@ -774,7 +939,7 @@
       state.lang = state.lang === 'zh' ? 'en' : 'zh';
       return;
     }
-    if (hit(p, b.start)) state.screen = 'difficulty';
+    if (hit(p, b.start)) beginGlobalLoading('difficulty', initialPreloadFiles(), '正在点香……', 'Lighting incense...', 0.85, 3.0);
     else if (hit(p, b.rules)) state.screen = 'rules';
     else if (hit(p, b.gallery)) { state.lastScreen = 'menu'; state.screen = 'gallery'; }
   }
@@ -852,6 +1017,7 @@
   function draw() {
     clear();
     if (state.screen === 'menu') drawMenu();
+    else if (state.screen === 'loading') drawLoading();
     else if (state.screen === 'difficulty') drawDifficulty();
     else if (state.screen === 'rules') drawRules();
     else if (state.screen === 'gallery') drawGallery();
@@ -883,6 +1049,43 @@
     drawUIButton(b.start, en ? 'Start' : '开始游戏');
     drawUIButton(b.rules, en ? 'Rules' : '游戏规则');
     drawUIButton(b.gallery, en ? `Archive ${collectCountText()}` : `图鉴 ${collectCountText()}`);
+  }
+
+
+  function drawLoading() {
+    const l = state.layout;
+    drawDoodleBackground();
+    drawHomeGhostFires();
+    const progressInfo = assetLoadProgress(state.loadingFiles);
+    const timeProgress = clamp(state.loadingElapsed / Math.max(0.1, state.loadingMin), 0, 1);
+    const progress = clamp(Math.max(progressInfo.loaded * 0.92, timeProgress * 0.36), 0, 1);
+
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    roundRect(l.w * 0.09, l.h * 0.31, l.w * 0.82, 210, 24, true, true, 5);
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 30px system-ui, -apple-system, sans-serif';
+    ctx.fillText(ui(state.loadingTitle, state.loadingTitleEn), l.w / 2, l.h * 0.31 + 54);
+    ctx.font = '700 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(ui('正在准备前几间的鬼气和符咒', 'Preparing early spirits and seals'), l.w / 2, l.h * 0.31 + 90);
+    drawProgressBar(l.w * 0.18, l.h * 0.31 + 124, l.w * 0.64, 18, progress);
+    ctx.font = '700 12px system-ui, -apple-system, sans-serif';
+    const countText = progressInfo.total ? `${progressInfo.count}/${progressInfo.total}` : '';
+    ctx.fillText(ui(`素材 ${countText}`, `Assets ${countText}`), l.w / 2, l.h * 0.31 + 166);
+    ctx.restore();
+  }
+
+  function drawProgressBar(x, y, w, h, ratio) {
+    ctx.save();
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 3;
+    roundRect(x, y, w, h, h / 2, true, true, 3);
+    ctx.fillStyle = '#111';
+    roundRect(x + 3, y + 3, Math.max(0, (w - 6) * clamp(ratio, 0, 1)), h - 6, (h - 6) / 2, true, false, 0);
+    ctx.restore();
   }
 
   function drawDifficulty() {
@@ -1062,6 +1265,7 @@
     else drawInfinityScene();
     drawTopUI();
     drawGhostEyeFx();
+    if (roomIsLoading()) drawRoomLoadingOverlay();
     drawBottomControls();
     drawToast();
   }
@@ -1120,13 +1324,13 @@
     drawInteriorPerspective(bigHole, innerWall);
     if (state.transitionFadeContent) {
       ctx.save();
-      // 人物/内容淡出和门洞放大使用同一个 eased transition 进度，避免先消失再放大。
-      drawContentBehindDoor(bigDoor, bigHole, { transitionFade: clamp(1 - t, 0, 1) });
+      ctx.globalAlpha = clamp(1 - t * 1.45, 0, 1);
+      drawContentBehindDoor(bigDoor, bigHole);
       ctx.restore();
     }
     drawBigWall(bigHole);
-    drawDoorPanel(bigDoor, 0, { big: true });
-    drawDoorBaseLine(bigDoor, 0, 1);
+    drawDoorPanel(bigDoor, state.transitionDoor, { big: true });
+    drawDoorBaseLine(bigDoor, state.transitionDoor, 1);
     ctx.restore();
   }
 
@@ -1417,20 +1621,16 @@
     ctx.restore();
   }
 
-  function drawContentBehindDoor(doorArg, holeArg, opts = {}) {
+  function drawContentBehindDoor(doorArg, holeArg) {
     const c = state.content;
     if (!c) return;
     const l = state.layout;
     const door = doorArg || l.bigDoor;
     const hole = holeArg || l.bigHole;
     const floorY = door.y + door.h * 0.96;
-    let contentAlpha = typeof opts.transitionFade === 'number'
-      ? opts.transitionFade
+    let contentAlpha = state.mode === 'transition' && state.transitionFadeContent
+      ? clamp(1 - state.transition, 0, 1)
       : 1;
-    if (state.mode === 'personFade' && c.type === 'person') {
-      contentAlpha *= clamp(1 - state.personFade, 0, 1);
-    }
-
     ctx.save();
     ctx.globalAlpha *= contentAlpha;
     ctx.beginPath();
@@ -1481,11 +1681,10 @@
       const x = cx + side * bodyH * (0.22 + layer * 0.08) + drift;
       const y = cy - bodyH * (0.04 + layer * 0.035) + bob;
       const size = bodyH * (0.14 + (i % 3) * 0.022);
-      const fireFile = GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length];
-      const img = getAsset(fireFile);
+      const img = getAssetImage(GHOST_FIRE_FILES[(safeSeed + i) % GHOST_FIRE_FILES.length]);
       const pulse = 0.72 + Math.sin(state.t * 3.2 + i) * 0.15;
       ctx.globalAlpha = clamp(0.72 + pulse * 0.24, 0.58, 1);
-      if (img && img.complete && img.naturalWidth) {
+      if (img && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
       } else {
         drawCodeGhostFire(x, y, size, pulse);
@@ -1513,7 +1712,7 @@
   }
 
   function drawCharacter(def, x, floorY, targetH, kind, scale = 1) {
-    const img = getAsset(def.file);
+    const img = getAssetImage(def.file);
     const h = targetH * scale * (def.scale || 1);
     const aspect = img && img.naturalWidth ? img.naturalWidth / img.naturalHeight : 0.62;
     const w = h * aspect;
@@ -1526,31 +1725,45 @@
       ctx.shadowBlur = 24 + pulse * 16;
     }
 
-    if (img && img.complete && img.naturalWidth) {
+    if (img && img.naturalWidth) {
       ctx.drawImage(img, x - w / 2, y, w, h);
     } else {
-      drawFallbackCharacter(def.name, x, y, w, h, kind);
+      // 游戏内绝不能因为素材加载慢/路径问题而看不到内容。
+      // 这里画临时鬼/人物占位；蛋形问号只允许用于图鉴未解锁。
+      drawFallbackCharacter(def.name || displayName(def), x, y, w, h, kind);
     }
     ctx.restore();
   }
 
   function drawFallbackCharacter(name, x, y, w, h, kind) {
     ctx.save();
-    ctx.fillStyle = kind === 'person' ? '#fffdf6' : '#111';
-    ctx.strokeStyle = kind === 'person' ? '#111' : '#fffdf6';
-    ctx.lineWidth = 4;
+    const isPerson = kind === 'person';
+    const isBoss = kind === 'boss';
+    ctx.fillStyle = isPerson ? '#fffdf6' : '#111';
+    ctx.strokeStyle = isPerson ? '#111' : '#fffdf6';
+    ctx.lineWidth = isBoss ? 5 : 4;
+    // 临时站立角色：不是图鉴蛋形，占位时仍能判断门后有东西。
     ctx.beginPath();
-    ctx.ellipse(x, y + h * 0.43, w * 0.38, h * 0.42, 0, 0, Math.PI * 2);
+    ctx.arc(x, y + h * 0.16, w * 0.20, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(x, y + h * 0.14, w * 0.23, 0, Math.PI * 2);
+    ctx.moveTo(x, y + h * 0.30);
+    ctx.bezierCurveTo(x + w * 0.34, y + h * 0.35, x + w * 0.32, y + h * 0.70, x, y + h * 0.82);
+    ctx.bezierCurveTo(x - w * 0.34, y + h * 0.70, x - w * 0.32, y + h * 0.35, x, y + h * 0.30);
+    ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = kind === 'person' ? '#111' : '#fffdf6';
-    ctx.font = '700 12px system-ui, sans-serif';
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.15, y + h * 0.82);
+    ctx.lineTo(x - w * 0.26, y + h);
+    ctx.moveTo(x + w * 0.15, y + h * 0.82);
+    ctx.lineTo(x + w * 0.26, y + h);
+    ctx.stroke();
+    ctx.fillStyle = isPerson ? '#111' : '#fffdf6';
+    ctx.font = '700 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(name.slice(0, 4), x, y + h * 0.54);
+    ctx.fillText(String(name || '').slice(0, 4), x, y + h * 0.55);
     ctx.restore();
   }
 
@@ -1691,7 +1904,8 @@
 
   function drawBottomControls() {
     const l = state.layout;
-    if (state.mode === 'transition' || state.mode === 'sealSuccess' || state.mode === 'personFade') return;
+    if (roomIsLoading()) return;
+    if (state.mode === 'transition' || state.mode === 'sealSuccess') return;
 
     if (state.mode === 'bossFight') {
       drawBossSealButton(l.bossButton);
@@ -1702,7 +1916,7 @@
   }
 
   function drawSealButton(r) {
-    const img = getAsset('封印按钮.png');
+    const img = getAssetImage('封印按钮.png');
     ctx.save();
     if (img && img.complete && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
@@ -1746,6 +1960,32 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(ui('疯狂贴封印！', 'Seal Fast!'), 0, 0);
+    ctx.restore();
+  }
+
+
+  function drawRoomLoadingOverlay() {
+    const l = state.layout;
+    const r = state.roomLoading;
+    if (!r) return;
+    const prog = assetLoadProgress(r.files);
+    const ratio = clamp(Math.max(prog.loaded * 0.88, r.elapsed / Math.max(0.1, r.min) * 0.28), 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.94;
+    const w = Math.min(l.w * 0.78, 310);
+    const h = 78;
+    const x = (l.w - w) / 2;
+    const y = l.topH + l.gameH * 0.34;
+    ctx.fillStyle = '#fffdf6';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 4;
+    roundRect(x, y, w, h, 18, true, true, 4);
+    ctx.fillStyle = '#111';
+    ctx.font = '900 16px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ui(r.title, r.titleEn), l.w / 2, y + 26);
+    drawProgressBar(x + 34, y + 48, w - 68, 10, ratio);
     ctx.restore();
   }
 
@@ -1814,9 +2054,9 @@
       const x = baseX + Math.sin(state.t * (0.8 + i * 0.06) + i) * 16;
       const y = baseY + Math.cos(state.t * (1.0 + i * 0.08) + i * 1.7) * 18;
       const size = Math.max(34, Math.min(58, l.w * (0.09 + (i % 3) * 0.012)));
-      const img = assets[GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]];
+      const img = getAssetImage(GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]);
       ctx.globalAlpha = 0.34 + Math.sin(state.t * 2 + i) * 0.08;
-      if (img && img.complete && img.naturalWidth) {
+      if (img && img.naturalWidth) {
         ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
       } else {
         drawCodeGhostFire(x, y, size, 0.8);
@@ -1948,8 +2188,8 @@
   }
 
   function drawCardImage(item, box, silhouette) {
-    const img = getAsset(item.file);
-    if (img && img.complete && img.naturalWidth) {
+    const img = getAssetImage(item.file);
+    if (img && img.naturalWidth) {
       const aspect = img.naturalWidth / img.naturalHeight;
       let drawH = box.h * 0.96;
       let drawW = drawH * aspect;
