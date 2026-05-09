@@ -1,14 +1,14 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.20';
+  const VERSION = 'v0.11.21';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
   const STORAGE_KEY = 'next_room_v01111_save';
 
-  const ASSET_BASES = ['assets/', './assets/', './', 'images/', './images/'];
+  const ASSET_BASES = ['', 'assets/', 'images/'];
 
   const GHOSTS = [
     { name: '猼訑', nameEn: 'Botuo', file: '猼訑.png', type: 'normal', speed: 1.28, fire: 2, desc: '警觉又狡猾，喜欢躲在门后观察人。', descEn: 'Alert and cunning. It likes watching people from behind the door.' },
@@ -135,7 +135,7 @@
       const encoded = encodeURI(src);
       if (encoded !== src && !urls.includes(encoded)) urls.push(encoded);
     };
-    // 先并行尝试最常用的资源位置，避免一层层 404 导致看起来“加载很慢”。
+    // 根目录优先：你的图片目前主要放在仓库根目录，所以不要先请求 assets/ 造成手机端 404 等待。
     ASSET_BASES.forEach(base => push(base + file));
     return urls;
   }
@@ -150,14 +150,20 @@
       failed: false,
       img: null,
       pending: 0,
-      src: ''
+      src: '',
+      index: 0,
+      candidates: assetCandidateUrls(file)
     };
     assetCache[file] = record;
 
-    const candidates = assetCandidateUrls(file);
-    record.pending = candidates.length;
-
-    candidates.forEach(src => {
+    const tryNext = () => {
+      if (record.loaded) return;
+      if (record.index >= record.candidates.length) {
+        record.failed = true;
+        assets[file] = null;
+        return;
+      }
+      const src = record.candidates[record.index++];
       const img = new Image();
       img.decoding = 'async';
       img.onload = () => {
@@ -169,16 +175,12 @@
         assets[file] = img;
       };
       img.onerror = () => {
-        record.pending -= 1;
-        if (record.pending <= 0 && !record.loaded) {
-          record.failed = true;
-          // 只标记失败，不阻止后续重新尝试。
-          assets[file] = null;
-        }
+        tryNext();
       };
       img.src = src;
-    });
+    };
 
+    tryNext();
     return record;
   }
 
