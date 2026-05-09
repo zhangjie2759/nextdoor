@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.16';
+  const VERSION = 'v0.11.17';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -118,19 +118,26 @@
   }
 
   function loadImageWithFallback(file) {
-    let baseIndex = 0;
+    const candidates = [];
+    ASSET_BASES.forEach(base => {
+      const raw = base + file;
+      const encoded = encodeURI(raw);
+      candidates.push(raw);
+      if (encoded !== raw) candidates.push(encoded);
+    });
+    let index = 0;
     const img = new Image();
     img.decoding = 'async';
     img.onload = () => { assets[file] = img; };
     img.onerror = () => {
-      baseIndex += 1;
-      if (baseIndex < ASSET_BASES.length) {
-        img.src = encodeURI(ASSET_BASES[baseIndex] + file);
+      index += 1;
+      if (index < candidates.length) {
+        img.src = candidates[index];
       } else {
         assets[file] = null;
       }
     };
-    img.src = encodeURI(ASSET_BASES[baseIndex] + file);
+    img.src = candidates[index];
     assets[file] = img;
   }
 
@@ -1497,27 +1504,43 @@
 
     if (img && img.naturalWidth) {
       ctx.drawImage(img, x - w / 2, y, w, h);
+    } else {
+      // 游戏内绝不能因为素材加载慢/路径问题而看不到内容。
+      // 这里画临时鬼/人物占位；蛋形问号只允许用于图鉴未解锁。
+      drawFallbackCharacter(def.name || displayName(def), x, y, w, h, kind);
     }
     ctx.restore();
   }
 
   function drawFallbackCharacter(name, x, y, w, h, kind) {
     ctx.save();
-    ctx.fillStyle = kind === 'person' ? '#fffdf6' : '#111';
-    ctx.strokeStyle = kind === 'person' ? '#111' : '#fffdf6';
-    ctx.lineWidth = 4;
+    const isPerson = kind === 'person';
+    const isBoss = kind === 'boss';
+    ctx.fillStyle = isPerson ? '#fffdf6' : '#111';
+    ctx.strokeStyle = isPerson ? '#111' : '#fffdf6';
+    ctx.lineWidth = isBoss ? 5 : 4;
+    // 临时站立角色：不是图鉴蛋形，占位时仍能判断门后有东西。
     ctx.beginPath();
-    ctx.ellipse(x, y + h * 0.43, w * 0.38, h * 0.42, 0, 0, Math.PI * 2);
+    ctx.arc(x, y + h * 0.16, w * 0.20, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(x, y + h * 0.14, w * 0.23, 0, Math.PI * 2);
+    ctx.moveTo(x, y + h * 0.30);
+    ctx.bezierCurveTo(x + w * 0.34, y + h * 0.35, x + w * 0.32, y + h * 0.70, x, y + h * 0.82);
+    ctx.bezierCurveTo(x - w * 0.34, y + h * 0.70, x - w * 0.32, y + h * 0.35, x, y + h * 0.30);
+    ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = kind === 'person' ? '#111' : '#fffdf6';
-    ctx.font = '700 12px system-ui, sans-serif';
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.15, y + h * 0.82);
+    ctx.lineTo(x - w * 0.26, y + h);
+    ctx.moveTo(x + w * 0.15, y + h * 0.82);
+    ctx.lineTo(x + w * 0.26, y + h);
+    ctx.stroke();
+    ctx.fillStyle = isPerson ? '#111' : '#fffdf6';
+    ctx.font = '700 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(name.slice(0, 4), x, y + h * 0.54);
+    ctx.fillText(String(name || '').slice(0, 4), x, y + h * 0.55);
     ctx.restore();
   }
 
