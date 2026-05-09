@@ -1,12 +1,12 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.10';
+  const VERSION = 'v0.11.11';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v01110_save';
+  const STORAGE_KEY = 'next_room_v01111_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
@@ -77,6 +77,10 @@
     galleryDragging: false,
     galleryDragStartY: 0,
     galleryDragStartScroll: 0,
+    rulesScroll: 0,
+    rulesDragging: false,
+    rulesDragStartY: 0,
+    rulesDragStartScroll: 0,
     save: loadSave(),
     pointer: { x: 0, y: 0, down: false },
     layout: null,
@@ -680,6 +684,11 @@
     const p = getPointer(e);
     state.pointer.x = p.x;
     state.pointer.y = p.y;
+    if (state.screen === 'rules' && state.rulesDragging) {
+      e.preventDefault();
+      state.rulesScroll = clamp(state.rulesDragStartScroll + (state.rulesDragStartY - p.y), 0, maxRulesScroll());
+      return;
+    }
     if (state.screen === 'gallery' && state.galleryDragging) {
       e.preventDefault();
       state.galleryScroll = clamp(state.galleryDragStartScroll + (state.galleryDragStartY - p.y), 0, maxGalleryScroll());
@@ -695,6 +704,9 @@
   function onPointerUp(e) {
     const p = getPointer(e);
     state.pointer = { x: p.x, y: p.y, down: false };
+    if (state.rulesDragging) {
+      state.rulesDragging = false;
+    }
     if (state.galleryDragging) {
       state.galleryDragging = false;
     }
@@ -709,9 +721,15 @@
   canvas.addEventListener('pointerup', onPointerUp, { passive: false });
   canvas.addEventListener('pointercancel', onPointerUp, { passive: false });
   canvas.addEventListener('wheel', e => {
-    if (state.screen !== 'gallery') return;
-    e.preventDefault();
-    state.galleryScroll = clamp(state.galleryScroll + e.deltaY, 0, maxGalleryScroll());
+    if (state.screen === 'rules') {
+      e.preventDefault();
+      state.rulesScroll = clamp(state.rulesScroll + e.deltaY, 0, maxRulesScroll());
+      return;
+    }
+    if (state.screen === 'gallery') {
+      e.preventDefault();
+      state.galleryScroll = clamp(state.galleryScroll + e.deltaY, 0, maxGalleryScroll());
+    }
   }, { passive: false });
 
   function menuButtons() {
@@ -752,7 +770,17 @@
   }
 
   function handleRulesDown(p) {
-    if (hit(p, { x: 16, y: 18, w: 70, h: 40 })) state.screen = 'menu';
+    if (hit(p, { x: 16, y: 18, w: 70, h: 40 })) {
+      state.screen = 'menu';
+      state.rulesDragging = false;
+      return;
+    }
+    const panel = rulesPanelRect();
+    if (hit(p, panel)) {
+      state.rulesDragging = true;
+      state.rulesDragStartY = p.y;
+      state.rulesDragStartScroll = state.rulesScroll;
+    }
   }
 
   function handleGalleryDown(p) {
@@ -812,6 +840,7 @@
   function drawMenu() {
     const l = state.layout;
     drawDoodleBackground();
+    drawHomeGhostFires();
     const en = state.lang === 'en';
     ctx.save();
     ctx.textAlign = 'center';
@@ -845,38 +874,58 @@
     drawUIButton({ x, y: l.h * 0.43 + 94, w: bw, h: 70 }, ui('困难版', 'Hard'), ui('原始速度 / 更紧张', 'Original speed / tense'));
   }
 
+  function rulesLines() {
+    return isEn() ? [
+      '1. Drag the wooden sliding door left to peek inside. Release to snap open or closed.',
+      '2. Ghosts have different speeds. If you stare too long, they will step closer and burst out.',
+      '3. For normal ghosts, closing the door resets their approach. Close the door, then tap Seal.',
+      '4. Multiple ghosts require multiple seals, but the button will never reveal how many are left.',
+      '5. If there is a person or an empty room, open the door wide enough to pass. Sealing them ends the run.',
+      '6. After sealing the Nine-tailed Fox, Ghost Eye opens for 10 seconds and the door becomes transparent.',
+      '7. Bosses appear near every 25th room. Confirm the Boss, close the door, then seal rapidly before it forces the door open.',
+      '8. The Archive records ghosts and people you have seen. Scroll to view all entries.'
+    ] : [
+      '1. 拖动红木滑门向左开门，松手后会自动吸附开/关。',
+      '2. 鬼有快慢差异，看太久会一段段逼近，危险值满了就会冲出来。',
+      '3. 普通鬼只要关门，逼近进度会重置；看清后关门，再点击封印。',
+      '4. 多只鬼需要贴多张符，但封印按钮不会显示还剩几张，避免剧透。',
+      '5. 门后是人物或空房间时，开到足够大即可通过；乱封会直接失败。',
+      '6. 封印九尾狐后开启10秒鬼眼，门会变透明，并出现眼睛特效。',
+      '7. 每25关附近会出现Boss：先开门确认，再关门疯狂贴符，不能让它把门顶开。',
+      '8. 图鉴会记录见过的鬼和人物，可以上下滑动查看全部内容。'
+    ];
+  }
+
+  function rulesPanelRect() {
+    const l = state.layout;
+    return { x: l.w * 0.07, y: l.h * 0.31, w: l.w * 0.86, h: l.h * 0.55 };
+  }
+
+  function maxRulesScroll() {
+    const r = rulesPanelRect();
+    ctx.save();
+    ctx.font = `${isEn() ? 12 : 14}px system-ui, -apple-system, sans-serif`;
+    const h = measureLinesHeight(rulesLines(), r.w - 36, isEn() ? 17 : 22, 7);
+    ctx.restore();
+    return Math.max(0, h - (r.h - 42));
+  }
+
   function drawRules() {
     const l = state.layout;
     drawDoodleBackground();
     drawBackButton();
-    drawTitleBlock(ui('游戏规则', 'Rules'), ui('不要乱封，也不要看太久', 'Do not seal blindly. Do not stare too long.'));
-    const lines = isEn() ? [
-      '1. Drag the door left to open. Release to snap open or closed.',
-      '2. If there is a ghost: look, close the door, then tap Seal.',
-      '3. If there is a person or an empty room: open wide enough to pass.',
-      '4. Sealing a person or an empty room ends the run.',
-      '5. Multiple ghosts require multiple seals, but the button will not reveal the number.',
-      '6. Bosses appear near every 25th room. Confirm first, then close the door and seal rapidly.',
-      '7. Sealing the Nine-tailed Fox activates Ghost Eye for 10 seconds.'
-    ] : [
-      '1. 拖动门向左滑开，松手后门会自动吸附开/关。',
-      '2. 门后是鬼：看清后关门，再点“封印”。',
-      '3. 门后是人物或空房间：开到足够大即可通过。',
-      '4. 对人物或空房间乱封，会直接失败。',
-      '5. 多只鬼需要贴多张符，但按钮不会提示数量。',
-      '6. 每25关附近会出现Boss，必须先开门确认，再关门狂贴符。',
-      '7. 封印九尾狐后，会开启10秒鬼眼透视。'
-    ];
-    drawTextPanel(lines, l.w * 0.08, l.h * 0.31, l.w * 0.84, l.h * 0.50);
+    drawTitleBlock(ui('游戏规则', 'Rules'), ui('不要乱封，也不要看太久', 'Observe first. Seal only when sure.'));
+    state.rulesScroll = clamp(state.rulesScroll, 0, maxRulesScroll());
+    drawScrollableTextPanel(rulesLines(), rulesPanelRect(), state.rulesScroll);
   }
 
   function galleryMetrics() {
     const l = state.layout;
     const list = state.galleryTab === 'ghosts' ? GHOSTS : PEOPLE;
-    const cols = 3;
+    const cols = isEn() ? 2 : 3;
     const gap = 12;
     const cardW = (l.w - 32 - gap * (cols - 1)) / cols;
-    const cardH = Math.min(176, cardW * 1.72);
+    const cardH = isEn() ? Math.min(218, cardW * 1.42) : Math.min(182, cardW * 1.78);
     const startY = 138;
     const rows = Math.ceil(list.length / cols);
     const contentH = rows * (cardH + 14) - 14;
@@ -1733,6 +1782,26 @@
     ctx.restore();
   }
 
+  function drawHomeGhostFires() {
+    const l = state.layout;
+    ctx.save();
+    for (let i = 0; i < 9; i++) {
+      const baseX = (0.08 + (i % 5) * 0.21) * l.w;
+      const baseY = (0.14 + Math.floor(i / 5) * 0.55 + (i % 2) * 0.08) * l.h;
+      const x = baseX + Math.sin(state.t * (0.8 + i * 0.06) + i) * 16;
+      const y = baseY + Math.cos(state.t * (1.0 + i * 0.08) + i * 1.7) * 18;
+      const size = Math.max(34, Math.min(58, l.w * (0.09 + (i % 3) * 0.012)));
+      const img = assets[GHOST_FIRE_FILES[i % GHOST_FIRE_FILES.length]];
+      ctx.globalAlpha = 0.34 + Math.sin(state.t * 2 + i) * 0.08;
+      if (img && img.complete && img.naturalWidth) {
+        ctx.drawImage(img, x - size / 2, y - size * 0.65, size, size * 1.28);
+      } else {
+        drawCodeGhostFire(x, y, size, 0.8);
+      }
+    }
+    ctx.restore();
+  }
+
   function drawTitleBlock(title, sub) {
     const l = state.layout;
     ctx.save();
@@ -1806,49 +1875,71 @@
     ctx.strokeStyle = '#111';
     ctx.lineWidth = 3;
     roundRect(r.x, r.y, r.w, r.h, 16, true, true, 3);
+    const imageBox = { x: r.x + 6, y: r.y + 6, w: r.w - 12, h: r.h - (isEn() ? 78 : 66) };
     ctx.beginPath();
-    ctx.rect(r.x + 6, r.y + 6, r.w - 12, r.h - 64);
+    ctx.rect(imageBox.x, imageBox.y, imageBox.w, imageBox.h);
     ctx.clip();
     if (seen) {
-      const img = assets[item.file];
-      if (img && img.complete && img.naturalWidth) {
-        const boxW = r.w - 20;
-        const boxH = r.h - 82;
-        const aspect = img.naturalWidth / img.naturalHeight;
-        let drawH = boxH;
-        let drawW = drawH * aspect;
-        if (drawW > boxW) {
-          drawW = boxW;
-          drawH = drawW / aspect;
-        }
-        ctx.drawImage(img, r.x + r.w / 2 - drawW / 2, r.y + 10 + boxH - drawH, drawW, drawH);
-      } else {
-        drawFallbackCharacter(item.name, r.x + r.w / 2, r.y + 14, r.w * 0.62, r.h * 0.65, state.galleryTab === 'people' ? 'person' : 'ghost');
-      }
+      drawCardImage(item, imageBox, false);
     } else {
-      ctx.fillStyle = '#111';
-      ctx.globalAlpha = 0.22;
-      ctx.beginPath();
-      ctx.ellipse(r.x + r.w / 2, r.y + r.h * 0.34, r.w * 0.24, r.h * 0.20, 0, 0, Math.PI * 2);
-      ctx.fill();
+      drawCardImage(item, imageBox, true);
+      ctx.save();
       ctx.globalAlpha = 1;
-      ctx.fillStyle = '#111';
-      ctx.font = '900 22px system-ui, sans-serif';
+      ctx.font = `900 ${Math.max(26, r.w * 0.32)}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
-      ctx.fillText('？', r.x + r.w / 2, r.y + r.h * 0.37);
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = '#fffdf6';
+      ctx.fillStyle = '#111';
+      ctx.strokeText('?', r.x + r.w / 2, imageBox.y + imageBox.h * 0.50);
+      ctx.fillText('?', r.x + r.w / 2, imageBox.y + imageBox.h * 0.50);
+      ctx.restore();
     }
     ctx.restore();
 
     ctx.save();
+    ctx.beginPath();
+    ctx.rect(r.x + 6, r.y + r.h - (isEn() ? 72 : 58), r.w - 12, isEn() ? 68 : 54);
+    ctx.clip();
     ctx.fillStyle = '#111';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textBaseline = 'top';
     ctx.font = '800 12px system-ui, -apple-system, sans-serif';
-    ctx.fillText(seen ? displayName(item) : ui('？？？', '???'), r.x + r.w / 2, r.y + r.h - 44);
-    ctx.font = '600 10px system-ui, -apple-system, sans-serif';
+    ctx.fillText(seen ? displayName(item) : ui('？？？', '???'), r.x + r.w / 2, r.y + r.h - (isEn() ? 70 : 56));
+    ctx.font = `${isEn() ? 9.5 : 10}px system-ui, -apple-system, sans-serif`;
     const desc = seen ? displayDesc(item) : ui('尚未记录', 'Not recorded yet');
-    wrapText(desc, r.x + r.w / 2, r.y + r.h - 30, r.w - 14, 12, 'center');
+    wrapText(desc, r.x + r.w / 2, r.y + r.h - (isEn() ? 52 : 38), r.w - 14, isEn() ? 11 : 12, 'center');
     ctx.restore();
+  }
+
+  function drawCardImage(item, box, silhouette) {
+    const img = assets[item.file];
+    if (img && img.complete && img.naturalWidth) {
+      const aspect = img.naturalWidth / img.naturalHeight;
+      let drawH = box.h * 0.96;
+      let drawW = drawH * aspect;
+      if (drawW > box.w * 0.95) {
+        drawW = box.w * 0.95;
+        drawH = drawW / aspect;
+      }
+      const x = box.x + box.w / 2 - drawW / 2;
+      const y = box.y + box.h - drawH;
+      if (silhouette) {
+        ctx.save();
+        ctx.drawImage(img, x, y, drawW, drawH);
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = '#111';
+        ctx.fillRect(x, y, drawW, drawH);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, x, y, drawW, drawH);
+      }
+    } else {
+      ctx.save();
+      if (silhouette) ctx.globalAlpha = 0.9;
+      drawFallbackCharacter(item.name, box.x + box.w / 2, box.y + box.h * 0.08, box.w * 0.56, box.h * 0.86, state.galleryTab === 'people' ? 'person' : 'ghost');
+      ctx.restore();
+    }
   }
 
   function drawTextPanel(lines, x, y, w, h) {
@@ -1868,29 +1959,95 @@
     ctx.restore();
   }
 
+  function drawScrollableTextPanel(lines, r, scroll) {
+    ctx.save();
+    ctx.fillStyle = '#fffdf6';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 4;
+    roundRect(r.x, r.y, r.w, r.h, 18, true, true, 4);
+    ctx.beginPath();
+    ctx.rect(r.x + 12, r.y + 14, r.w - 28, r.h - 28);
+    ctx.clip();
+    ctx.fillStyle = '#111';
+    ctx.font = `${isEn() ? 12 : 14}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const lineH = isEn() ? 17 : 22;
+    let yy = r.y + 20 - scroll;
+    lines.forEach(line => {
+      yy = wrapText(line, r.x + 18, yy, r.w - 42, lineH, 'left') + 7;
+    });
+    ctx.restore();
+
+    const maxScroll = maxRulesScroll();
+    if (maxScroll > 0) {
+      const trackH = r.h - 30;
+      const thumbH = Math.max(32, trackH * ((r.h - 42) / ((r.h - 42) + maxScroll)));
+      const thumbY = r.y + 15 + (trackH - thumbH) * (scroll / maxScroll);
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      roundRect(r.x + r.w - 11, r.y + 15, 4, trackH, 2, true, false, 0);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      roundRect(r.x + r.w - 12, thumbY, 6, thumbH, 3, true, false, 0);
+      ctx.restore();
+    }
+  }
+
+  function measureLinesHeight(lines, maxWidth, lineHeight, gap = 0) {
+    let total = 0;
+    lines.forEach(line => {
+      total += countWrappedLines(line, maxWidth) * lineHeight + gap;
+    });
+    return total;
+  }
+
+  function countWrappedLines(text, maxWidth) {
+    const tokens = textTokens(text);
+    let line = '';
+    let count = 1;
+    tokens.forEach(token => {
+      const test = line + token;
+      if (ctx.measureText(test).width > maxWidth && line.trim()) {
+        line = token.trimStart ? token.trimStart() : token;
+        count += 1;
+      } else {
+        line = test;
+      }
+    });
+    return count;
+  }
+
   function collectCountText() {
     return `${seenGhostCount() + seenPeopleCount()}/${GHOSTS.length + PEOPLE.length}`;
   }
   function seenGhostCount() { return GHOSTS.filter(g => state.save.ghosts[g.name]).length; }
   function seenPeopleCount() { return PEOPLE.filter(p => state.save.people[p.name]).length; }
 
+  function textTokens(text) {
+    const s = String(text);
+    if (/[A-Za-z]/.test(s) && /\s/.test(s)) {
+      return s.split(/(\s+)/).filter(Boolean);
+    }
+    return s.split('');
+  }
+
   function wrapText(text, x, y, maxWidth, lineHeight, align = 'left') {
     ctx.save();
     ctx.textAlign = align;
-    const words = String(text).split('');
+    const tokens = textTokens(text);
     let line = '';
     let yy = y;
-    for (let i = 0; i < words.length; i++) {
-      const test = line + words[i];
-      if (ctx.measureText(test).width > maxWidth && line) {
-        ctx.fillText(line, x, yy);
-        line = words[i];
+    for (let i = 0; i < tokens.length; i++) {
+      const test = line + tokens[i];
+      if (ctx.measureText(test).width > maxWidth && line.trim()) {
+        ctx.fillText(line.trimEnd ? line.trimEnd() : line, x, yy);
+        line = tokens[i].trimStart ? tokens[i].trimStart() : tokens[i];
         yy += lineHeight;
       } else {
         line = test;
       }
     }
-    if (line) ctx.fillText(line, x, yy);
+    if (line) ctx.fillText(line.trimEnd ? line.trimEnd() : line, x, yy);
     ctx.restore();
     return yy + lineHeight;
   }
