@@ -1,12 +1,12 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.3';
+  const VERSION = 'v0.11.5';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0113_save';
+  const STORAGE_KEY = 'next_room_v0115_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
@@ -1487,15 +1487,6 @@
     ctx.save();
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, l.w, l.h);
-    ctx.strokeStyle = 'rgba(17,17,17,0.12)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 18; i++) {
-      const x = (i * 73) % l.w;
-      const y = (i * 127) % l.h;
-      ctx.beginPath();
-      ctx.arc(x, y, 8 + (i % 4) * 6, 0, Math.PI * 2);
-      ctx.stroke();
-    }
     ctx.restore();
   }
 
@@ -1660,7 +1651,18 @@
   }
 
   function roundRectPath(x, y, w, h, r) {
-    roundRectPath(x, y, w, h, r);
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.lineTo(x + w - rr, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+    ctx.lineTo(x + w, y + h - rr);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+    ctx.lineTo(x + rr, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+    ctx.lineTo(x, y + rr);
+    ctx.quadraticCurveTo(x, y, x + rr, y);
+    ctx.closePath();
   }
 
   function roundRect(x, y, w, h, r, fill, stroke, lineWidth = 1) {
