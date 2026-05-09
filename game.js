@@ -1,40 +1,40 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.8';
+  const VERSION = 'v0.11.9';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
   const DPR_MAX = 2;
-  const STORAGE_KEY = 'next_room_v0118_save';
+  const STORAGE_KEY = 'next_room_v0119_save';
 
   const ASSET_BASES = ['assets/', './', 'images/'];
 
   const GHOSTS = [
-    { name: '猼訑', file: '猼訑.png', type: 'normal', speed: 1.28, fire: 2, desc: '警觉又狡猾，喜欢躲在门后观察人。' },
-    { name: '赤鱬', file: '赤鱬.png', type: 'thin', speed: 2.08, fire: 2, desc: '细长灵活，动作很快，最擅长突然贴近。' },
-    { name: '当康', file: '当康.png', type: 'heavy', speed: 1.05, fire: 2, desc: '体型敦实，压迫感强，逼近时像重物挪动。' },
-    { name: '混沌', file: '混沌.png', type: 'heavy', speed: 0.72, fire: 3, desc: '轮廓混乱，越盯着看越分不清它的形状。' },
-    { name: '九尾狐', file: '九尾狐.png', type: 'normal', speed: 1.76, fire: 2, ghostEye: true, desc: '擅长迷惑视线，被封印后会短暂开启鬼眼。' },
-    { name: '夔牛', file: '夔牛.png', type: 'heavy', speed: 1.18, fire: 2, desc: '独脚震地，虽然不快，但每次靠近都很有压迫。' },
-    { name: '麒麟', file: '麒麟.png', type: 'normal', speed: 1.42, fire: 2, desc: '外表庄重，但在门后出现时往往并不吉利。' },
-    { name: '穷奇', file: '穷奇.png', type: 'thin', speed: 2.22, fire: 3, desc: '凶性外露，判断失误时最容易被它扑出门。' },
-    { name: '饕餮', file: '饕餮.png', type: 'heavy', speed: 1.32, fire: 3, desc: '贪婪巨口，虽然笨重，但存在感异常强烈。' },
-    { name: '狰', file: '狰.png', type: 'normal', speed: 1.70, fire: 3, desc: '神情凶狠，常常伴着成群鬼火一起出现。' },
-    { name: '烛阴', file: '烛阴.png', type: 'thin', speed: 2.45, fire: 3, desc: '危险等级极高，速度极快，几乎不给人反应时间。' }
+    { name: '猼訑', nameEn: 'Botuo', file: '猼訑.png', type: 'normal', speed: 1.28, fire: 2, desc: '警觉又狡猾，喜欢躲在门后观察人。', descEn: 'Alert and cunning. It likes watching people from behind the door.' },
+    { name: '赤鱬', nameEn: 'Chiru', file: '赤鱬.png', type: 'thin', speed: 2.08, fire: 2, desc: '细长灵活，动作很快，最擅长突然贴近。', descEn: 'Slim, agile, and fast. It is good at suddenly closing the distance.' },
+    { name: '当康', nameEn: 'Dangkang', file: '当康.png', type: 'heavy', speed: 1.05, fire: 2, desc: '体型敦实，压迫感强，逼近时像重物挪动。', descEn: 'Heavy and solid. Its approach feels like something massive shifting forward.' },
+    { name: '混沌', nameEn: 'Hundun', file: '混沌.png', type: 'heavy', speed: 0.72, fire: 3, desc: '轮廓混乱，越盯着看越分不清它的形状。', descEn: 'A chaotic silhouette. The longer you stare, the harder it is to read.' },
+    { name: '九尾狐', nameEn: 'Nine-tailed Fox', file: '九尾狐.png', type: 'normal', speed: 1.76, fire: 2, ghostEye: true, desc: '擅长迷惑视线，被封印后会短暂开启鬼眼。', descEn: 'A master of deception. Sealing it briefly activates Ghost Eye.' },
+    { name: '夔牛', nameEn: 'Kui Ox', file: '夔牛.png', type: 'heavy', speed: 1.18, fire: 2, desc: '独脚震地，虽然不快，但每次靠近都很有压迫。', descEn: 'Not the fastest, but every step feels heavy and oppressive.' },
+    { name: '麒麟', nameEn: 'Qilin', file: '麒麟.png', type: 'normal', speed: 1.42, fire: 2, desc: '外表庄重，但在门后出现时往往并不吉利。', descEn: 'It looks solemn, but seeing it behind the door is never a good sign.' },
+    { name: '穷奇', nameEn: 'Qiongqi', file: '穷奇.png', type: 'thin', speed: 2.22, fire: 3, desc: '凶性外露，判断失误时最容易被它扑出门。', descEn: 'Ferocious and direct. One bad read can let it burst out.' },
+    { name: '饕餮', nameEn: 'Taotie', file: '饕餮.png', type: 'heavy', speed: 1.32, fire: 3, desc: '贪婪巨口，虽然笨重，但存在感异常强烈。', descEn: 'A greedy maw. Slow and heavy, but impossible to ignore.' },
+    { name: '狰', nameEn: 'Zheng', file: '狰.png', type: 'normal', speed: 1.70, fire: 3, desc: '神情凶狠，常常伴着成群鬼火一起出现。', descEn: 'A fierce presence, often surrounded by ghost fire.' },
+    { name: '烛阴', nameEn: 'Zhuyin', file: '烛阴.png', type: 'thin', speed: 2.45, fire: 3, desc: '危险等级极高，速度极快，几乎不给人反应时间。', descEn: 'Extremely dangerous and very fast. It gives you almost no time to react.' }
   ];
 
   const PEOPLE = [
-    { name: '1号人物', file: '1号人物.png', scale: 1.14, desc: '一个看起来有点拘谨的普通住客。' },
-    { name: '2号人物', file: '2号人物.png', desc: '总像在发呆，但目前没有发现异常。' },
-    { name: '3号人物', file: '3号人物.png', desc: '动作有点夸张，容易让人误以为是鬼。' },
-    { name: '4号人物', file: '4号人物.png', desc: '门后最常见的住客之一，神态比较平静。' },
-    { name: '5号人物', file: '5号人物.png', desc: '经常保持奇怪姿势，但本质上只是普通人。' },
-    { name: '6号人物', file: '6号人物.png', desc: '喜欢独自待着，容易制造出尴尬气氛。' },
-    { name: '7号人物', file: '7号人物.png', desc: '看起来心事重重，常常在角落停留。' },
-    { name: '8号人物', file: '8号人物.png', desc: '表情有点空，但目前还算安全。' },
-    { name: '9号人物', file: '9号人物.png', desc: '动作松弛，属于让人放松警惕的类型。' },
-    { name: '10号人物', file: '10号人物.png', desc: '气质最怪的一位普通住客，最容易被误封。' }
+    { name: '1号人物', nameEn: 'Resident 1', file: '1号人物.png', scale: 1.28, desc: '一个看起来有点拘谨的普通住客。', descEn: 'A slightly awkward but ordinary resident.' },
+    { name: '2号人物', nameEn: 'Resident 2', file: '2号人物.png', desc: '总像在发呆，但目前没有发现异常。', descEn: 'Often looks spaced out, but no anomaly has been found.' },
+    { name: '3号人物', nameEn: 'Resident 3', file: '3号人物.png', desc: '动作有点夸张，容易让人误以为是鬼。', descEn: 'Moves dramatically, which makes them easy to misjudge.' },
+    { name: '4号人物', nameEn: 'Resident 4', file: '4号人物.png', desc: '门后最常见的住客之一，神态比较平静。', descEn: 'One of the more common residents behind the door.' },
+    { name: '5号人物', nameEn: 'Resident 5', file: '5号人物.png', desc: '经常保持奇怪姿势，但本质上只是普通人。', descEn: 'Often caught in odd poses, but still a normal person.' },
+    { name: '6号人物', nameEn: 'Resident 6', file: '6号人物.png', desc: '喜欢独自待着，容易制造出尴尬气氛。', descEn: 'Likes being alone and often creates awkward scenes.' },
+    { name: '7号人物', nameEn: 'Resident 7', file: '7号人物.png', desc: '看起来心事重重，常常在角落停留。', descEn: 'Looks troubled and often stays in the corner.' },
+    { name: '8号人物', nameEn: 'Resident 8', file: '8号人物.png', desc: '表情有点空，但目前还算安全。', descEn: 'A blank expression, but currently considered safe.' },
+    { name: '9号人物', nameEn: 'Resident 9', file: '9号人物.png', desc: '动作松弛，属于让人放松警惕的类型。', descEn: 'Relaxed and harmless-looking, which can lower your guard.' },
+    { name: '10号人物', nameEn: 'Resident 10', file: '10号人物.png', desc: '气质最怪的一位普通住客，最容易被误封。', descEn: 'The strangest-looking resident, and the easiest to seal by mistake.' }
   ];
 
   const GHOST_FIRE_FILES = ['鬼火1.png', '鬼火2.png', '鬼火3.png', '鬼火4.png', '鬼火5.png'];
@@ -72,6 +72,10 @@
     bossWindowSeen: {},
     toast: null,
     galleryTab: 'ghosts',
+    galleryScroll: 0,
+    galleryDragging: false,
+    galleryDragStartY: 0,
+    galleryDragStartScroll: 0,
     save: loadSave(),
     pointer: { x: 0, y: 0, down: false },
     layout: null,
@@ -186,6 +190,10 @@
   function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
   function easeInOut(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
   function randItem(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function isEn() { return state.lang === 'en'; }
+  function displayName(item) { return isEn() ? (item.nameEn || item.name) : item.name; }
+  function displayDesc(item) { return isEn() ? (item.descEn || item.desc || 'No record yet.') : (item.desc || '暂无记录'); }
+  function ui(zh, en) { return isEn() ? en : zh; }
 
   function startRun(difficulty) {
     state.screen = 'game';
@@ -645,6 +653,11 @@
     const p = getPointer(e);
     state.pointer.x = p.x;
     state.pointer.y = p.y;
+    if (state.screen === 'gallery' && state.galleryDragging) {
+      e.preventDefault();
+      state.galleryScroll = clamp(state.galleryDragStartScroll + (state.galleryDragStartY - p.y), 0, maxGalleryScroll());
+      return;
+    }
     if (!state.draggingDoor || state.screen !== 'game' || state.mode !== 'normal') return;
     e.preventDefault();
     const l = state.layout;
@@ -655,6 +668,9 @@
   function onPointerUp(e) {
     const p = getPointer(e);
     state.pointer = { x: p.x, y: p.y, down: false };
+    if (state.galleryDragging) {
+      state.galleryDragging = false;
+    }
     if (state.draggingDoor) {
       state.draggingDoor = false;
       state.snapTarget = state.door > 0.46 ? 1 : 0;
@@ -665,6 +681,11 @@
   canvas.addEventListener('pointermove', onPointerMove, { passive: false });
   canvas.addEventListener('pointerup', onPointerUp, { passive: false });
   canvas.addEventListener('pointercancel', onPointerUp, { passive: false });
+  canvas.addEventListener('wheel', e => {
+    if (state.screen !== 'gallery') return;
+    e.preventDefault();
+    state.galleryScroll = clamp(state.galleryScroll + e.deltaY, 0, maxGalleryScroll());
+  }, { passive: false });
 
   function menuButtons() {
     const l = state.layout;
@@ -711,14 +732,27 @@
     const l = state.layout;
     if (hit(p, { x: 16, y: 18, w: 70, h: 40 })) {
       state.screen = state.lastScreen === 'game' ? 'game' : 'menu';
+      state.galleryDragging = false;
       return;
     }
     const tabY = 78;
     const tabW = Math.min(146, (l.w - 44) / 2);
     const ghostTab = { x: 18, y: tabY, w: tabW, h: 42 };
     const peopleTab = { x: 28 + tabW, y: tabY, w: tabW, h: 42 };
-    if (hit(p, ghostTab)) state.galleryTab = 'ghosts';
-    else if (hit(p, peopleTab)) state.galleryTab = 'people';
+    if (hit(p, ghostTab)) {
+      state.galleryTab = 'ghosts';
+      state.galleryScroll = 0;
+      return;
+    } else if (hit(p, peopleTab)) {
+      state.galleryTab = 'people';
+      state.galleryScroll = 0;
+      return;
+    }
+    if (p.y > 126) {
+      state.galleryDragging = true;
+      state.galleryDragStartY = p.y;
+      state.galleryDragStartScroll = state.galleryScroll;
+    }
   }
 
   function handleResultDown(p) {
@@ -777,19 +811,27 @@
     const l = state.layout;
     drawDoodleBackground();
     drawBackButton();
-    drawTitleBlock('选择难度', '简单版会降低瘦子鬼速度');
+    drawTitleBlock(ui('选择难度', 'Select Difficulty'), ui('简单版会降低瘦子鬼速度', 'Easy mode slows down thin ghosts'));
     const bw = Math.min(270, l.w * 0.72);
     const x = (l.w - bw) / 2;
-    drawUIButton({ x, y: l.h * 0.43, w: bw, h: 70 }, '简单版', '新手 / 瘦子鬼更慢');
-    drawUIButton({ x, y: l.h * 0.43 + 94, w: bw, h: 70 }, '困难版', '原始速度 / 更紧张');
+    drawUIButton({ x, y: l.h * 0.43, w: bw, h: 70 }, ui('简单版', 'Easy'), ui('新手 / 瘦子鬼更慢', 'Beginner / slower thin ghosts'));
+    drawUIButton({ x, y: l.h * 0.43 + 94, w: bw, h: 70 }, ui('困难版', 'Hard'), ui('原始速度 / 更紧张', 'Original speed / tense'));
   }
 
   function drawRules() {
     const l = state.layout;
     drawDoodleBackground();
     drawBackButton();
-    drawTitleBlock('游戏规则', '不要乱封，也不要看太久');
-    const lines = [
+    drawTitleBlock(ui('游戏规则', 'Rules'), ui('不要乱封，也不要看太久', 'Do not seal blindly. Do not stare too long.'));
+    const lines = isEn() ? [
+      '1. Drag the door left to open. Release to snap open or closed.',
+      '2. If there is a ghost: look, close the door, then tap Seal.',
+      '3. If there is a person or an empty room: open wide enough to pass.',
+      '4. Sealing a person or an empty room ends the run.',
+      '5. Multiple ghosts require multiple seals, but the button will not reveal the number.',
+      '6. Bosses appear near every 25th room. Confirm first, then close the door and seal rapidly.',
+      '7. Sealing the Nine-tailed Fox activates Ghost Eye for 10 seconds.'
+    ] : [
       '1. 拖动门向左滑开，松手后门会自动吸附开/关。',
       '2. 门后是鬼：看清后关门，再点“封印”。',
       '3. 门后是人物或空房间：开到足够大即可通过。',
@@ -801,39 +843,71 @@
     drawTextPanel(lines, l.w * 0.08, l.h * 0.31, l.w * 0.84, l.h * 0.50);
   }
 
-  function drawGallery() {
+  function galleryMetrics() {
     const l = state.layout;
+    const list = state.galleryTab === 'ghosts' ? GHOSTS : PEOPLE;
+    const cols = 3;
+    const gap = 12;
+    const cardW = (l.w - 32 - gap * (cols - 1)) / cols;
+    const cardH = Math.min(176, cardW * 1.72);
+    const startY = 138;
+    const rows = Math.ceil(list.length / cols);
+    const contentH = rows * (cardH + 14) - 14;
+    const viewH = l.h - startY - 18;
+    return { l, list, cols, gap, cardW, cardH, startY, contentH, viewH };
+  }
+
+  function maxGalleryScroll() {
+    const m = galleryMetrics();
+    return Math.max(0, m.contentH - m.viewH);
+  }
+
+  function drawGallery() {
+    const m = galleryMetrics();
+    const l = m.l;
+    state.galleryScroll = clamp(state.galleryScroll, 0, maxGalleryScroll());
     drawDoodleBackground();
     drawBackButton();
     ctx.save();
     ctx.fillStyle = '#111';
     ctx.font = '900 30px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('图鉴', l.w / 2, 45);
+    ctx.fillText(ui('图鉴', 'Archive'), l.w / 2, 45);
     ctx.restore();
 
     const tabY = 78;
     const tabW = Math.min(146, (l.w - 44) / 2);
     const ghostTab = { x: 18, y: tabY, w: tabW, h: 42 };
     const peopleTab = { x: 28 + tabW, y: tabY, w: tabW, h: 42 };
-    drawTab(ghostTab, `鬼图鉴 ${seenGhostCount()}/${GHOSTS.length}`, state.galleryTab === 'ghosts');
-    drawTab(peopleTab, `人物图鉴 ${seenPeopleCount()}/${PEOPLE.length}`, state.galleryTab === 'people');
+    drawTab(ghostTab, `${ui('鬼图鉴', 'Ghosts')} ${seenGhostCount()}/${GHOSTS.length}`, state.galleryTab === 'ghosts');
+    drawTab(peopleTab, `${ui('人物图鉴', 'People')} ${seenPeopleCount()}/${PEOPLE.length}`, state.galleryTab === 'people');
 
-    const list = state.galleryTab === 'ghosts' ? GHOSTS : PEOPLE;
     const seenMap = state.galleryTab === 'ghosts' ? state.save.ghosts : state.save.people;
-    const cols = 3;
-    const gap = 12;
-    const cardW = (l.w - 32 - gap * (cols - 1)) / cols;
-    const cardH = Math.min(176, cardW * 1.72);
-    const startY = 138;
-
-    list.forEach((item, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const x = 16 + col * (cardW + gap);
-      const y = startY + row * (cardH + 14);
-      drawGalleryCard({ x, y, w: cardW, h: cardH }, item, !!seenMap[item.name]);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, m.startY - 4, l.w, l.h - m.startY + 4);
+    ctx.clip();
+    m.list.forEach((item, i) => {
+      const col = i % m.cols;
+      const row = Math.floor(i / m.cols);
+      const x = 16 + col * (m.cardW + m.gap);
+      const y = m.startY + row * (m.cardH + 14) - state.galleryScroll;
+      if (y > l.h || y + m.cardH < m.startY - 10) return;
+      drawGalleryCard({ x, y, w: m.cardW, h: m.cardH }, item, !!seenMap[item.name]);
     });
+    ctx.restore();
+
+    if (maxGalleryScroll() > 0) {
+      const trackH = l.h - m.startY - 24;
+      const thumbH = Math.max(34, trackH * (m.viewH / (m.contentH || 1)));
+      const thumbY = m.startY + 8 + (trackH - thumbH) * (state.galleryScroll / maxGalleryScroll());
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      roundRect(l.w - 9, m.startY + 8, 4, trackH, 2, true, false, 0);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      roundRect(l.w - 10, thumbY, 6, thumbH, 3, true, false, 0);
+      ctx.restore();
+    }
   }
 
   function drawResult() {
@@ -845,18 +919,44 @@
     roundRect(l.w * 0.08, l.h * 0.22, l.w * 0.84, l.h * 0.28, 24, true, true, 5);
     ctx.fillStyle = '#111';
     ctx.font = '900 38px system-ui, -apple-system, sans-serif';
-    ctx.fillText('游戏结束', l.w / 2, l.h * 0.30);
+    ctx.fillText(ui('游戏结束', 'Game Over'), l.w / 2, l.h * 0.30);
     ctx.font = '700 17px system-ui, -apple-system, sans-serif';
-    wrapText(state.resultReason, l.w / 2, l.h * 0.365, l.w * 0.72, 24, 'center');
+    wrapText(resultText(state.resultReason), l.w / 2, l.h * 0.365, l.w * 0.72, 24, 'center');
     ctx.font = '800 16px system-ui, -apple-system, sans-serif';
-    ctx.fillText(`本次到达：第 ${state.room} 间`, l.w / 2, l.h * 0.445);
-    ctx.fillText(`最高纪录：第 ${state.save.bestRoom || 1} 间`, l.w / 2, l.h * 0.478);
+    ctx.fillText(ui(`本次到达：第 ${state.room} 间`, `Reached Room ${state.room}`), l.w / 2, l.h * 0.445);
+    ctx.fillText(ui(`最高纪录：第 ${state.save.bestRoom || 1} 间`, `Best: Room ${state.save.bestRoom || 1}`), l.w / 2, l.h * 0.478);
     ctx.restore();
 
     const bw = Math.min(260, l.w * 0.68);
     const x = (l.w - bw) / 2;
-    drawUIButton({ x, y: l.h * 0.58, w: bw, h: 58 }, '再来一局');
-    drawUIButton({ x, y: l.h * 0.58 + 76, w: bw, h: 58 }, '返回主页');
+    drawUIButton({ x, y: l.h * 0.58, w: bw, h: 58 }, ui('再来一局', 'Try Again'));
+    drawUIButton({ x, y: l.h * 0.58 + 76, w: bw, h: 58 }, ui('返回主页', 'Home'));
+  }
+
+  function resultText(zh) {
+    if (!isEn()) return zh;
+    const map = {
+      '门开太久，鬼冲出来了': 'The door stayed open too long. The ghost escaped.',
+      '封错了，人家只是普通人': 'Wrong seal. That was just a normal person.',
+      '封错了，这间房是空的': 'Wrong seal. This room was empty.',
+      '强制Boss战失败，Boss冲出来了': 'Forced boss fight failed. The boss broke out.'
+    };
+    return map[zh] || zh || 'Run ended.';
+  }
+
+  function toastText(zh) {
+    if (!isEn()) return zh;
+    const map = {
+      'Boss开始顶门！': 'Boss is forcing the door!',
+      '先开门确认': 'Open the door to confirm first.',
+      '关门后才能开始贴符': 'Close the door before sealing.',
+      '先把门关上': 'Close the door first.',
+      '鬼眼开启：10秒透视': 'Ghost Eye: 10 seconds of vision.',
+      '符咒贴上去了': 'Seal placed.',
+      'Boss已封印，进入下一大关': 'Boss sealed. Next stage unlocked.',
+      'Boss逃走了': 'Boss escaped.'
+    };
+    return map[zh] || zh;
   }
 
   function drawGame() {
@@ -972,28 +1072,42 @@
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // 房间轮廓线：外门洞向内墙收束。线宽固定，不随门大小变化。
+    // 墙面/天花连接线：必须连到后墙与地板，避免断线。
     ctx.strokeStyle = 'rgba(0,0,0,0.42)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(frontTopL.x, frontTopL.y);
     ctx.lineTo(backTopL.x, backTopL.y);
+    ctx.lineTo(backL.x, backL.y);
     ctx.moveTo(frontTopR.x, frontTopR.y);
     ctx.lineTo(backTopR.x, backTopR.y);
+    ctx.lineTo(backR.x, backR.y);
     ctx.moveTo(frontL.x, frontL.y);
     ctx.lineTo(backL.x, backL.y);
     ctx.moveTo(frontR.x, frontR.y);
     ctx.lineTo(backR.x, backR.y);
     ctx.stroke();
 
-    // 前后落地线：内门底部会精确压到后落地线。
+    // 后墙天花横线 + 后墙两条竖线 + 后墙地板线。
+    ctx.strokeStyle = 'rgba(0,0,0,0.58)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(backTopL.x, backTopL.y);
+    ctx.lineTo(backTopR.x, backTopR.y);
+    ctx.moveTo(backTopL.x, backTopL.y);
+    ctx.lineTo(backL.x, backL.y);
+    ctx.moveTo(backTopR.x, backTopR.y);
+    ctx.lineTo(backR.x, backR.y);
+    ctx.moveTo(backL.x, backL.y);
+    ctx.lineTo(backR.x, backR.y);
+    ctx.stroke();
+
+    // 前方门洞地板线。
     ctx.strokeStyle = 'rgba(0,0,0,0.56)';
     ctx.lineWidth = 2.4;
     ctx.beginPath();
     ctx.moveTo(frontL.x, frontL.y);
     ctx.lineTo(frontR.x, frontR.y);
-    ctx.moveTo(backL.x, backL.y);
-    ctx.lineTo(backR.x, backR.y);
     ctx.stroke();
 
     // 地砖网格：横线和纵线都从同一个四边形地面计算，避免不对齐。
@@ -1108,8 +1222,6 @@
     const h = door.h;
     const strokeW = 5;
     const inset = 13;
-    const handleW = 8;
-    const handleH = Math.min(76, h * 0.18);
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -1129,13 +1241,25 @@
     ctx.beginPath();
     roundRectPath(x + 3, y + 3, w - 6, h - 6, 8);
     ctx.clip();
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+
+    // 竖向木纹：不再画横向木纹，也不再画门把手。
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
     ctx.lineWidth = 1;
-    for (let i = 0; i < 12; i++) {
-      const yy = y + h * (0.06 + i * 0.08);
+    const stripeCount = Math.max(6, Math.floor(w / 22));
+    for (let i = 1; i < stripeCount; i++) {
+      const xx = x + (w / stripeCount) * i + Math.sin(i * 1.7) * 1.2;
       ctx.beginPath();
-      ctx.moveTo(x + 8, yy + Math.sin(i * 1.7) * 1.5);
-      ctx.lineTo(x + w - 8, yy + Math.cos(i * 1.2) * 1.5);
+      ctx.moveTo(xx, y + 8);
+      ctx.bezierCurveTo(xx + Math.sin(i) * 1.5, y + h * 0.30, xx - Math.cos(i) * 1.3, y + h * 0.65, xx + Math.sin(i * 2.1), y + h - 8);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,0.14)';
+    ctx.lineWidth = 1.3;
+    for (let i = 1; i < stripeCount; i += 2) {
+      const xx = x + (w / stripeCount) * i;
+      ctx.beginPath();
+      ctx.moveTo(xx, y + 6);
+      ctx.lineTo(xx, y + h - 6);
       ctx.stroke();
     }
     ctx.restore();
@@ -1144,23 +1268,9 @@
     ctx.strokeStyle = 'rgba(255,255,255,0.22)';
     roundRect(x + inset, y + inset, w - inset * 2, h - inset * 2, 8, false, true, 2.2);
 
-    ctx.globalAlpha = alpha * 0.15;
+    ctx.globalAlpha = alpha * 0.12;
     ctx.fillStyle = '#ffffff';
     roundRect(x + inset, y + inset, Math.max(22, w * 0.12), h - inset * 2, 8, true, false, 0);
-    ctx.globalAlpha = alpha;
-
-    if (!opts.noHandle) {
-      const handleX = x + w - inset - handleW - 8;
-      const handleY = y + h * 0.5 - handleH / 2;
-      ctx.strokeStyle = '#111';
-      ctx.lineWidth = 2.4;
-      roundRect(handleX, handleY, handleW, handleH, 4, false, true, 2.4);
-      ctx.beginPath();
-      ctx.moveTo(handleX + handleW * 0.5, handleY + handleH * 0.18);
-      ctx.lineTo(handleX + handleW * 0.5, handleY + handleH * 0.82);
-      ctx.stroke();
-    }
-
     ctx.restore();
   }
 
@@ -1421,18 +1531,18 @@
     ctx.lineTo(l.w, l.topH - 2);
     ctx.stroke();
 
-    drawMiniButton(l.home, '主页');
-    drawMiniButton(l.galleryButton, '图鉴');
+    drawMiniButton(l.home, ui('主页', 'Home'));
+    drawMiniButton(l.galleryButton, ui('图鉴', 'Archive'));
 
     ctx.fillStyle = '#111';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.font = '900 16px system-ui, -apple-system, sans-serif';
-    ctx.fillText(`第 ${state.room} 间`, 86, 20);
+    ctx.fillText(ui(`第 ${state.room} 间`, `Room ${state.room}`), 86, 20);
     ctx.font = '700 11px system-ui, -apple-system, sans-serif';
-    const diff = state.difficulty === 'easy' ? '简单' : '困难';
-    ctx.fillText(`难度 ${diff}  最高 ${state.save.bestRoom || 1}`, 86, 40);
-    ctx.fillText(`进度 ${prog.index}/25  Boss：${prog.boss.name}`, 86, 58);
+    const diff = state.difficulty === 'easy' ? ui('简单', 'Easy') : ui('困难', 'Hard');
+    ctx.fillText(ui(`难度 ${diff}  最高 ${state.save.bestRoom || 1}`, `${diff}  Best ${state.save.bestRoom || 1}`), 86, 40);
+    ctx.fillText(ui(`进度 ${prog.index}/25  Boss：${prog.boss.name}`, `Progress ${prog.index}/25  Boss: ${displayName(prog.boss)}`), 86, 58);
 
     const barX = 86;
     const barY = l.topH - 13;
@@ -1450,7 +1560,7 @@
     ctx.fillText(collectCountText(), l.w - 10, 61);
     if (state.ghostEye > 0) {
       ctx.font = '800 11px system-ui, -apple-system, sans-serif';
-      ctx.fillText(`鬼眼 ${Math.ceil(state.ghostEye)}s`, l.w - 10, l.topH - 16);
+      ctx.fillText(ui(`鬼眼 ${Math.ceil(state.ghostEye)}s`, `Eye ${Math.ceil(state.ghostEye)}s`), l.w - 10, l.topH - 16);
     }
 
     if (state.mode === 'bossFight' && state.content && state.content.type === 'boss') {
@@ -1533,7 +1643,7 @@
     ctx.font = '900 24px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('疯狂贴封印！', 0, 0);
+    ctx.fillText(ui('疯狂贴封印！', 'Seal Fast!'), 0, 0);
     ctx.restore();
   }
 
@@ -1581,7 +1691,7 @@
     ctx.font = '800 14px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(state.toast.text, l.w / 2, y + h / 2);
+    ctx.fillText(toastText(state.toast.text), l.w / 2, y + h / 2);
     ctx.restore();
   }
 
@@ -1608,7 +1718,9 @@
   }
 
   function drawBackButton() {
-    const label = state.screen === 'gallery' && state.lastScreen === 'game' ? '返回游戏' : '返回';
+    const label = state.screen === 'gallery' && state.lastScreen === 'game'
+      ? ui('返回游戏', 'Back')
+      : ui('返回', 'Back');
     drawMiniButton({ x: 16, y: 18, w: 70, h: 40 }, label);
   }
 
@@ -1702,9 +1814,9 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = '800 12px system-ui, -apple-system, sans-serif';
-    ctx.fillText(seen ? item.name : '？？？', r.x + r.w / 2, r.y + r.h - 44);
+    ctx.fillText(seen ? displayName(item) : ui('？？？', '???'), r.x + r.w / 2, r.y + r.h - 44);
     ctx.font = '600 10px system-ui, -apple-system, sans-serif';
-    const desc = seen ? (item.desc || '暂无记录') : '尚未记录';
+    const desc = seen ? displayDesc(item) : ui('尚未记录', 'Not recorded yet');
     wrapText(desc, r.x + r.w / 2, r.y + r.h - 30, r.w - 14, 12, 'center');
     ctx.restore();
   }
