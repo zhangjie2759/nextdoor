@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'v0.11.13';
+  const VERSION = 'v0.11.14';
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
@@ -450,13 +450,7 @@
       if (state.door >= 0.92) {
         c.passTimer += dt;
         if (c.passTimer > 0.22) {
-          if (c.type === 'person') {
-            state.mode = 'personFade';
-            state.personFade = 0;
-            state.snapTarget = null;
-          } else {
-            startAdvance({ toRoom: state.room + 1 });
-          }
+          startAdvance({ toRoom: state.room + 1, fadeContent: c.type === 'person' });
         }
       } else {
         c.passTimer = 0;
@@ -848,8 +842,8 @@
     ctx.fillStyle = '#fffdf6';
     roundRect(l.w / 2 - 138, l.h * 0.18, 276, 126, 24, true, true, 5);
     ctx.fillStyle = '#111';
-    ctx.font = en ? '900 44px system-ui, -apple-system, sans-serif' : '900 54px system-ui, -apple-system, sans-serif';
-    ctx.fillText(en ? 'NEXT ROOM' : '下一间', l.w / 2, l.h * 0.24);
+    ctx.font = en ? '900 34px system-ui, -apple-system, sans-serif' : '900 45px system-ui, -apple-system, sans-serif';
+    ctx.fillText(en ? 'TIMID EXORCIST' : '胆小除魔师', l.w / 2, l.h * 0.24);
     ctx.font = '700 15px system-ui, -apple-system, sans-serif';
     ctx.fillText(en ? 'Open. Observe. Decide.' : '开门一秒，识别异常', l.w / 2, l.h * 0.305);
     ctx.font = '700 13px system-ui, -apple-system, sans-serif';
@@ -1403,7 +1397,7 @@
     const hole = holeArg || l.bigHole;
     const floorY = door.y + door.h * 0.96;
     let contentAlpha = state.mode === 'transition' && state.transitionFadeContent
-      ? clamp(1 - state.transition * 1.15, 0, 1)
+      ? clamp(1 - state.transition, 0, 1)
       : 1;
     if (state.mode === 'personFade' && c.type === 'person') {
       contentAlpha *= clamp(1 - state.personFade, 0, 1);
